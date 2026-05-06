@@ -439,7 +439,12 @@ app.all('/seg/:encoded.ts', async (req, res) => {
 });
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Add-on disponível em http://localhost:${PORT}/manifest.json`);
   console.log(`HTTP addon accessible at: http://127.0.0.1:${PORT}/manifest.json`);
 });
+
+// Cloudflare Tunnel reuses upstream TCP connections. Node's default 5s
+// keepAliveTimeout can cause connection resets and a visible first-request delay.
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
