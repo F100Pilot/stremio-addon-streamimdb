@@ -1,0 +1,21 @@
+[Unit]
+Description=StreamIMDb Stremio Addon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=streamimdb
+WorkingDirectory=/opt/streamimdb
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=streamimdb
+
+# Load .env file
+EnvironmentFile=/opt/streamimdb/.env
+
+[Install]
+WantedBy=multi-user.target
