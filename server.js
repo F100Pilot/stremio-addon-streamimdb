@@ -1,6 +1,7 @@
 'use strict';
 require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const axios   = require('axios');
 const http    = require('http');
 const https   = require('https');
@@ -23,6 +24,9 @@ const SERVER_BASE = (
 ).replace(/\/$/, '');
 
 const app = express();
+
+// Enable gzip compression for faster manifest delivery
+app.use(compression());
 
 app.use(getRouter(addonInterface));
 
@@ -445,6 +449,7 @@ const server = app.listen(PORT, () => {
 });
 
 // Cloudflare Tunnel reuses upstream TCP connections. Node's default 5s
-// keepAliveTimeout can cause connection resets and a visible first-request delay.
-server.keepAliveTimeout = 65000;
-server.headersTimeout = 66000;
+// keepAliveTimeout can cause connection resets and visible first-request delay.
+// Increased for remote connections to prevent premature resets.
+server.keepAliveTimeout = 90000;
+server.headersTimeout = 95000;

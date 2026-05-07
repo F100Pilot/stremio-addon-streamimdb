@@ -88,7 +88,12 @@ function parseMasterPlaylist(body, masterUrl) {
     }
   }
 
-  return variants.sort((a, b) => b.bandwidth - a.bandwidth);
+  const sorted = variants.sort((a, b) => b.bandwidth - a.bandwidth);
+  if (sorted.length > 0) {
+    const variantStr = sorted.map(v => `${v.quality}(${(v.bandwidth/1000).toFixed(0)}kbps)`).join(', ');
+    console.log(`[scraper] Variantes no m3u8: ${variantStr}`);
+  }
+  return sorted;
 }
 
 // Testa um stream_url:
