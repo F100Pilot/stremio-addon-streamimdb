@@ -93,6 +93,10 @@ function getHealthStatus() {
 }
 
 function startHealthChecks() {
+  if (CHECK_INTERVAL === 0) {
+    console.log('[health] Health checks desactivados (HEALTH_CHECK_INTERVAL_MS=0)');
+    return null;
+  }
   healthCheck(); // Primeira check imediatamente
   const intervalId = setInterval(healthCheck, CHECK_INTERVAL);
   console.log(`[health] Health checks iniciados a cada ${Math.floor(CHECK_INTERVAL / 1000)}s`);
