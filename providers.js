@@ -92,7 +92,12 @@ async function searchStreams(tmdbId, type, season, episode) {
 }
 
 async function convertImdbToTmdb(imdbId) {
-  const url = `https://api.themoviedb.org/3/find/${imdbId}?external_source=imdb_id&api_key=undefined`;
+  const apiKey = process.env.TMDB_API_KEY;
+  if (!apiKey) {
+    console.log('[providers] TMDB_API_KEY não configurada');
+    return null;
+  }
+  const url = `https://api.themoviedb.org/3/find/${imdbId}?external_source=imdb_id&api_key=${apiKey}`;
   try {
     const res = await fetch(url);
     const data = await res.json();
