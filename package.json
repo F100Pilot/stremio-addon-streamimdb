@@ -11,6 +11,7 @@
     "axios": "^1.7.2",
     "compression": "^1.7.4",
     "dotenv": "^16.6.1",
+    "nodemailer": "^6.9.14",
     "puppeteer": "^23.0.0",
     "stremio-addon-sdk": "^1.6.10"
   }

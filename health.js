@@ -1,10 +1,33 @@
 'use strict';
 const axios = require('axios');
+let nodemailer;
+try { nodemailer = require('nodemailer'); } catch { nodemailer = null; }
 
 const CHECK_INTERVAL   = parseInt(process.env.HEALTH_CHECK_INTERVAL_MS) || 5 * 60 * 1000;
 const ALERT_WEBHOOK    = process.env.ALERT_WEBHOOK;
 const TG_TOKEN         = process.env.TELEGRAM_BOT_TOKEN;
 const TG_CHAT          = process.env.TELEGRAM_CHAT_ID;
+
+// Email (SMTP). Para Gmail: SMTP_USER = a tua conta, SMTP_PASS = App Password.
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = parseInt(process.env.SMTP_PORT) || 465;
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
+const ALERT_EMAIL = process.env.ALERT_EMAIL; // destinatário (default: SMTP_USER)
+
+let mailer = null;
+function getMailer() {
+  if (!nodemailer || !SMTP_USER || !SMTP_PASS) return null;
+  if (!mailer) {
+    mailer = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_PORT === 465,
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
+  }
+  return mailer;
+}
 
 // Test title: Star Wars (1977) — safe, widely available
 const TEST_IMDB = 'tt0076759';
@@ -68,12 +91,33 @@ async function sendWebhook(text) {
   }
 }
 
+async function sendEmail(subject, htmlBody) {
+  const transport = getMailer();
+  if (!transport) return;
+  const to = ALERT_EMAIL || SMTP_USER;
+  try {
+    // Remove tags HTML simples para o subject do email
+    const cleanSubject = subject.replace(/<[^>]+>/g, '');
+    await transport.sendMail({
+      from: `"StreamIMDb Monitor" <${SMTP_USER}>`,
+      to,
+      subject: cleanSubject,
+      html: htmlBody,
+    });
+    console.log(`[health] Email enviado para ${to}`);
+  } catch (e) {
+    console.log(`[health] Email erro: ${e.message}`);
+  }
+}
+
 async function sendAlert(subject, body) {
   console.log(`[health] ALERTA: ${subject}`);
   const full = `${subject}\n${body}`;
+  const html = `<div style="font-family:sans-serif">${subject}<br>${body.replace(/\n/g, '<br>')}</div>`;
   await Promise.all([
     sendTelegram(full),
     sendWebhook(full),
+    sendEmail(subject, html),
   ]);
 }
 
@@ -123,6 +167,7 @@ function getHealthStatus() {
     lastMessage: lastMsg,
     checkInterval: Math.floor(CHECK_INTERVAL / 1000),
     telegram: TG_TOKEN ? 'configurado' : 'não configurado',
+    email: getMailer() ? 'configurado' : 'não configurado',
   };
 }
 
@@ -133,7 +178,7 @@ function startHealthChecks() {
   }
   healthCheck();
   const id = setInterval(healthCheck, CHECK_INTERVAL);
-  console.log(`[health] Health checks iniciados a cada ${Math.floor(CHECK_INTERVAL / 1000)}s (Telegram: ${TG_TOKEN ? 'sim' : 'não'})`);
+  console.log(`[health] Health checks iniciados a cada ${Math.floor(CHECK_INTERVAL / 1000)}s (Telegram: ${TG_TOKEN ? 'sim' : 'não'}, Email: ${getMailer() ? 'sim' : 'não'})`);
   return id;
 }
 
