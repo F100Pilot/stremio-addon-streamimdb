@@ -67,7 +67,6 @@ async function tryStreamImdb(imdbId, type, season, episode) {
     }
 
     const iframeBody = typeof iframeRes.data === 'string' ? iframeRes.data : JSON.stringify(iframeRes.data);
-    console.log(`[alt] streamimdb CDN status=${iframeRes.status} len=${iframeBody.length} preview=${iframeBody.substring(0, 120).replace(/\n/g,' ')}`);
 
     const sources = extractSources(iframeBody);
     if (sources.length) {
