@@ -1,6 +1,7 @@
 'use strict';
 const { addonBuilder } = require('stremio-addon-sdk');
 const { fetchVideoSource } = require('./scraper');
+const { sign } = require('./proxy_token');
 
 const BRIGHTPATH_BASE = 'https://brightpathsignals.com/embed';
 const PORT = process.env.PORT || 7000;
@@ -25,8 +26,8 @@ const manifest = {
 const builder = new addonBuilder(manifest);
 
 function makeHlsProxyUrl(streamUrl, referer) {
-  const encoded = Buffer.from(JSON.stringify({ u: streamUrl, r: referer })).toString('base64url');
-  return `${SERVER_BASE}/hls/${encoded}.m3u8`;
+  const token = sign({ u: streamUrl, r: referer });
+  return `${SERVER_BASE}/hls/${token}.m3u8`;
 }
 
 builder.defineStreamHandler(async (args) => {

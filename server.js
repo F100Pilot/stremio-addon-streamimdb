@@ -9,6 +9,7 @@ const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 const { getStatus, fetchVideoSource, invalidateCache, cacheKey, getMfCache } = require('./scraper');
 const { startHealthChecks, getHealthStatus } = require('./health');
+const { sign, verify } = require('./proxy_token');
 
 const httpAgent  = new http.Agent({  keepAlive: true, maxSockets: 64 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
@@ -190,9 +191,8 @@ app.get('/health', (req, res) => {
 
 const PROXY_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-function decodeProxy(encoded) {
-  try { return JSON.parse(Buffer.from(encoded, 'base64url').toString()); }
-  catch { return null; }
+function decodeProxy(token) {
+  return verify(token);
 }
 
 function parseRefererMeta(referer) {
@@ -314,10 +314,10 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
       const t = line.trim();
       if (!t || t.startsWith('#')) return line;
       let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
-      const enc = Buffer.from(JSON.stringify({ u: abs, r: ref, b: base })).toString('base64url');
+      const tok = sign({ u: abs, r: ref, b: base });
       return abs.includes('.m3u8')
-        ? `${SERVER_BASE}/hls/${enc}.m3u8`
-        : `${SERVER_BASE}/seg/${enc}.ts`;
+        ? `${SERVER_BASE}/hls/${tok}.m3u8`
+        : `${SERVER_BASE}/seg/${tok}.ts`;
     }).join('\n');
     res.set('Content-Type', 'application/x-mpegURL');
     res.set('Cache-Control', 'no-cache');
@@ -358,10 +358,10 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     const t = line.trim();
     if (!t || t.startsWith('#')) return line;
     let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
-    const enc = Buffer.from(JSON.stringify({ u: abs, r: ref, b: base })).toString('base64url');
+    const tok = sign({ u: abs, r: ref, b: base });
     return abs.includes('.m3u8')
-      ? `${SERVER_BASE}/hls/${enc}.m3u8`
-      : `${SERVER_BASE}/seg/${enc}.ts`;
+      ? `${SERVER_BASE}/hls/${tok}.m3u8`
+      : `${SERVER_BASE}/seg/${tok}.ts`;
   }).join('\n');
 
   res.set('Content-Type', 'application/x-mpegURL');
