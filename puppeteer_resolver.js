@@ -41,18 +41,18 @@ const PROVIDERS = [
       : `https://streamimdb.me/embed/${id}/`,
   },
   {
-    name: 'vidsrc.net',
+    name: 'vidlink.pro',
     mode: 'direct',
     embed: (id, t, s, e) => t === 'series'
-      ? `https://vidsrc.net/embed/tv/${id}/${s}/${e}`
-      : `https://vidsrc.net/embed/movie/${id}`,
+      ? `https://vidlink.pro/tv/${id}/${s}/${e}`
+      : `https://vidlink.pro/movie/${id}`,
   },
   {
-    name: '2embed',
+    name: 'vidsrc.to',
     mode: 'direct',
     embed: (id, t, s, e) => t === 'series'
-      ? `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}`
-      : `https://www.2embed.cc/embed/${id}`,
+      ? `https://vidsrc.to/embed/tv/${id}/${s}/${e}`
+      : `https://vidsrc.to/embed/movie/${id}`,
   },
 ];
 
