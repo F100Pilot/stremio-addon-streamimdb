@@ -1,4 +1,4 @@
-# StreamIMDb Connector v1.4.0
+# StreamIMDb Connector v1.4.1
 
 ## Comandos
 ```
@@ -16,7 +16,7 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
 - `server.js` — express + `getRouter(addon)` + landing page + proxy HLS (`/hls`, `/seg`)
 - `addon.js` — manifesto `org.local.streamimdb` + `defineStreamHandler`
 - `scraper.js` — orquestra fontes (cache, dedup, protecção de sobrecarga)
-- `puppeteer_resolver.js` — resolve via browser real (passa Cloudflare Turnstile)
+- `puppeteer_resolver.js` — resolve via browser real (passa Cloudflare Turnstile); lista `PROVIDERS` com fallback
 - `alt_scraper.js` — tentativas axios (streamimdb.me iframe, multiembed)
 - `providers.js` — fallback movie-web (requer `TMDB_API_KEY`)
 - `health.js` — health checks periódicos + alertas
@@ -40,6 +40,14 @@ no passo `/prorcp`, que axios não consegue passar. O resolver:
 
 Concorrência limitada (`PPT_CONCURRENCY`), cache de 5min evita re-resolver o mesmo título.
 
+**Redundância de fontes:** `PROVIDERS` em `puppeteer_resolver.js` é uma lista tentada em sequência.
+Cada entrada tem `mode`:
+- `extract` — axios busca embed → extrai a iframe do player → carrega-a em página limpa na origin
+  do provider (evita anti-bot/ads). É o caminho comprovado do `streamimdb.me`.
+- `direct` — carrega o embed directamente no browser (stealth + bloqueio de ads).
+Para adicionar/remover fontes, edita só a lista `PROVIDERS`. As alternativas (vidsrc.net, 2embed)
+são best-effort — confirmar que estão vivas antes de confiar nelas.
+
 ## Proxy HLS (`server.js`)
 - Stream `proxyable:true` → `addon.js` cria `/hls/{base64}.m3u8` com `{u, r}` (r = referer da fonte)
 - `/hls` busca o manifesto com `Referer` + `Origin` **derivado do referer** (`originFromReferer`)
@@ -56,6 +64,7 @@ Concorrência limitada (`PPT_CONCURRENCY`), cache de 5min evita re-resolver o me
 | `MAX_SEG_RETRIES` | `1` (retries on 502/403) |
 | `PPT_CONCURRENCY` | `2` (resoluções Puppeteer em paralelo) |
 | `PPT_NAV_TIMEOUT_MS` | `45000` |
+| `PPT_PROVIDER_MS` | `22000` (tempo máx. por provider antes de passar ao seguinte) |
 | `PPT_IDLE_CLOSE_MS` | `300000` (fecha browser após inatividade) |
 | `HEALTH_CHECK_INTERVAL_MS` | `300000` (5min) |
 | `ALERT_WEBHOOK` / `ALERT_EMAIL` | — |

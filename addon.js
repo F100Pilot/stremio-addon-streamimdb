@@ -12,7 +12,7 @@ const SERVER_BASE = (
 
 const manifest = {
   id: 'org.local.streamimdb',
-  version: '1.4.0',
+  version: '1.4.1',
   name: 'StreamIMDb Connector',
   description: 'Stream movies and series via streamimdb.me natively inside Stremio.',
   logo: 'https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png',
