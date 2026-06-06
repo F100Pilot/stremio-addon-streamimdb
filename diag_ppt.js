@@ -4,7 +4,16 @@
 // Mostra todos os URLs interceptados e se o m3u8 foi capturado.
 
 const axios = require('axios');
-const puppeteer = require('puppeteer');
+let puppeteer;
+try {
+  const pe = require('puppeteer-extra');
+  pe.use(require('puppeteer-extra-plugin-stealth')());
+  puppeteer = pe;
+  console.log('[diag] stealth activo');
+} catch {
+  puppeteer = require('puppeteer');
+  console.log('[diag] stealth NÃO instalado — puppeteer normal');
+}
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const IMDB  = 'tt0076759';
@@ -32,15 +41,15 @@ async function main() {
       style="width:1280px;height:720px;border:0"></iframe></body></html>`;
   const embedPrefix = EMBED.split('?')[0];
 
-  console.log('\n[diag] Passo 2: lançar Chromium...');
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: [
-      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-gpu', '--mute-audio', '--window-size=1280,720',
-    ],
-  });
+  const HEADLESS = process.env.PPT_HEADLESS === 'false' ? false : 'new';
+  console.log(`\n[diag] Passo 2: lançar Chromium (headless=${HEADLESS})...`);
+  const args = [
+    '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+    '--disable-blink-features=AutomationControlled',
+    '--mute-audio', '--window-size=1280,720',
+  ];
+  if (HEADLESS) args.push('--disable-gpu');
+  const browser = await puppeteer.launch({ headless: HEADLESS, args });
 
   const page = await browser.newPage();
   await page.setUserAgent(UA);

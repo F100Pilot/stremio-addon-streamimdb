@@ -64,6 +64,9 @@ let browserPromise = null;
 let idleTimer = null;
 let activePages = 0;
 
+// PPT_HEADLESS=false → modo headful (sob Xvfb) — passa Turnstile melhor que headless.
+const HEADLESS = process.env.PPT_HEADLESS === 'false' ? false : 'new';
+
 async function getBrowser() {
   if (!puppeteer) throw new Error('puppeteer não instalado');
   if (browserPromise) {
@@ -71,18 +74,17 @@ async function getBrowser() {
     if (b.isConnected()) return b;
     browserPromise = null;
   }
-  browserPromise = puppeteer.launch({
-    headless: 'new',
-    args: [
-      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-gpu', '--mute-audio', '--no-first-run',
-      '--window-size=1280,720',
-    ],
-  });
+  const args = [
+    '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+    '--disable-blink-features=AutomationControlled',
+    '--mute-audio', '--no-first-run', '--window-size=1280,720',
+  ];
+  // Em headful (Xvfb) não desactivamos a GPU — ajuda a parecer um Chrome real.
+  if (HEADLESS) args.push('--disable-gpu');
+  browserPromise = puppeteer.launch({ headless: HEADLESS, args });
   const b = await browserPromise;
   b.on('disconnected', () => { browserPromise = null; });
-  console.log('[puppeteer] browser lançado');
+  console.log(`[puppeteer] browser lançado (headless=${HEADLESS})`);
   return b;
 }
 
