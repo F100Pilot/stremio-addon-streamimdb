@@ -1,6 +1,7 @@
 'use strict';
 const axios = require('axios');
 const { fetchFromProviders } = require('./providers');
+const { fetchFromAltSources } = require('./alt_scraper');
 
 const VAPLAYER_API_URL = process.env.VAPLAYER_API_URL || 'https://streamdata.vaplayer.ru/api.php';
 const BRIGHTPATH_BASE  = 'https://brightpathsignals.com/embed';
@@ -233,15 +234,28 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   let streams = await fetchPromise;
 
   if (!streams) {
-    console.log('[scraper] Provider principal falhou — a tentar movie-web providers...');
+    console.log('[scraper] Provider principal falhou — a tentar fontes alternativas...');
     try {
-      streams = await fetchFromProviders(imdbId, type, season, episode);
+      streams = await fetchFromAltSources(imdbId, type, season, episode);
       if (streams) {
-        console.log('[scraper] Providers fallback OK');
+        console.log('[scraper] Fontes alternativas OK');
         setCached(key, streams);
       }
     } catch (e) {
-      console.log('[scraper] Providers fallback falhou:', e.message);
+      console.log('[scraper] Fontes alternativas falharam:', e.message);
+    }
+  }
+
+  if (!streams) {
+    console.log('[scraper] A tentar movie-web providers...');
+    try {
+      streams = await fetchFromProviders(imdbId, type, season, episode);
+      if (streams) {
+        console.log('[scraper] movie-web providers OK');
+        setCached(key, streams);
+      }
+    } catch (e) {
+      console.log('[scraper] movie-web providers falhou:', e.message);
     }
   }
 
