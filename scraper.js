@@ -150,7 +150,7 @@ async function doFetch(imdbId, type, season, episode) {
       maxRedirects: 5,
     });
   } catch (e) {
-    console.error('[scraper] Erro na chamada API:', e.message);
+    console.log(`[scraper] vaplayer indisponível: ${e.message}`);
     return null;
   }
 
