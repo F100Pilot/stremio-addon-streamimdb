@@ -57,6 +57,34 @@ const PROVIDERS = [
       ? `https://embed.su/embed/tv/${id}/${s}/${e}`
       : `https://embed.su/embed/movie/${id}`,
   },
+  {
+    name: 'vidlink.pro',
+    mode: 'direct',
+    embed: (id, t, s, e) => t === 'series'
+      ? `https://vidlink.pro/tv/${id}/${s}/${e}`
+      : `https://vidlink.pro/movie/${id}`,
+  },
+  {
+    name: 'autoembed.cc',
+    mode: 'direct',
+    embed: (id, t, s, e) => t === 'series'
+      ? `https://autoembed.cc/tv/imdb/${id}-${s}-${e}`
+      : `https://autoembed.cc/movie/imdb/${id}`,
+  },
+  {
+    name: 'multiembed.mov',
+    mode: 'direct',
+    embed: (id, t, s, e) => t === 'series'
+      ? `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}`
+      : `https://multiembed.mov/?video_id=${id}&tmdb=1`,
+  },
+  {
+    name: 'smashystream',
+    mode: 'direct',
+    embed: (id, t, s, e) => t === 'series'
+      ? `https://player.smashy.stream/tv/${id}?s=${s}&e=${e}`
+      : `https://player.smashy.stream/movie/${id}`,
+  },
 ];
 
 const AD_RE = /(histats|\.cfd\/|unwrapsstow|specefeaster|popunder|doubleclick|googlesyndication|adservice|propeller|onclick|popcash|popads)/i;
