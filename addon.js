@@ -52,14 +52,9 @@ builder.defineStreamHandler(async (args) => {
     } catch (scraperErr) {
       console.error(`[handler] Erro no scraper: ${scraperErr.message}`);
     }
-
-    // Retry once on transient null (overload slot freed or brief API hiccup)
-    if (!result) {
-      await new Promise(r => setTimeout(r, 600));
-      try {
-        result = await fetchVideoSource(imdbId, type, season, episode);
-      } catch (_) {}
-    }
+    // Sem retry cego aqui: re-executaria toda a cadeia (incl. Puppeteer/Cloudflare)
+    // e amplificava a carga. A dedup/cache do scraper e o circuit breaker tratam
+    // dos casos transitórios.
 
     if (result && result.type === 'direct') {
       const streams = result.streams.map(s => {

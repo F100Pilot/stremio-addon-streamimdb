@@ -196,6 +196,23 @@ async function captureOnPage(browser, provider, embedUrl) {
   return result;
 }
 
+// ── Circuit breaker ───────────────────────────────────────────────────────────
+// Quando o Cloudflare degrada o IP, o Turnstile deixa de auto-resolver e cada
+// tentativa só piora a reputação. Após N falhas seguidas, entra em cooldown:
+// devolve null imediatamente, sem lançar browser nem tocar no Cloudflare.
+const CB_FAIL_THRESHOLD = parseInt(process.env.PPT_CB_THRESHOLD)   || 3;
+const CB_COOLDOWN_MS    = parseInt(process.env.PPT_CB_COOLDOWN_MS) || 10 * 60 * 1000; // 10min
+let consecutiveFails = 0;
+let cooldownUntil = 0;
+
+function circuitState() {
+  return {
+    consecutiveFails,
+    open: Date.now() < cooldownUntil,
+    cooldownRemainingMs: Math.max(0, cooldownUntil - Date.now()),
+  };
+}
+
 // ── Resolução: tenta cada provider em sequência ───────────────────────────────
 async function doResolve(imdbId, type, season, episode) {
   const browser = await getBrowser();
@@ -212,12 +229,38 @@ async function doResolve(imdbId, type, season, episode) {
 
 async function resolvePuppeteer(imdbId, type, season, episode) {
   if (!puppeteer) { console.log('[puppeteer] indisponível (não instalado)'); return null; }
+
+  // Circuit breaker aberto → recusa sem tocar no Cloudflare
+  if (Date.now() < cooldownUntil) {
+    const remMin = Math.ceil((cooldownUntil - Date.now()) / 60000);
+    console.log(`[puppeteer] circuit breaker ABERTO — cooldown ~${remMin}min (a poupar reputação do IP)`);
+    return null;
+  }
+
   await acquire();
   try {
-    return await doResolve(imdbId, type, season, episode);
+    const result = await doResolve(imdbId, type, season, episode);
+    if (result) {
+      if (consecutiveFails > 0) console.log('[puppeteer] sucesso — circuit breaker reposto');
+      consecutiveFails = 0;
+    } else {
+      consecutiveFails++;
+      console.log(`[puppeteer] falha ${consecutiveFails}/${CB_FAIL_THRESHOLD}`);
+      if (consecutiveFails >= CB_FAIL_THRESHOLD) {
+        cooldownUntil = Date.now() + CB_COOLDOWN_MS;
+        consecutiveFails = 0;
+        console.log(`[puppeteer] circuit breaker ACTIVADO — pausa de ${Math.round(CB_COOLDOWN_MS / 60000)}min`);
+        // Fecha o browser para libertar RAM durante o cooldown
+        if (browserPromise) {
+          try { const b = await browserPromise; await b.close(); } catch (_) {}
+          browserPromise = null;
+        }
+      }
+    }
+    return result;
   } finally {
     release();
   }
 }
 
-module.exports = { resolvePuppeteer };
+module.exports = { resolvePuppeteer, circuitState };

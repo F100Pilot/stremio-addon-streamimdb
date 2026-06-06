@@ -2,7 +2,7 @@
 const axios = require('axios');
 const { fetchFromProviders } = require('./providers');
 const { fetchFromAltSources } = require('./alt_scraper');
-const { resolvePuppeteer } = require('./puppeteer_resolver');
+const { resolvePuppeteer, circuitState } = require('./puppeteer_resolver');
 
 const VAPLAYER_API_URL = process.env.VAPLAYER_API_URL || 'https://streamdata.vaplayer.ru/api.php';
 const BRIGHTPATH_BASE  = 'https://brightpathsignals.com/embed';
@@ -293,6 +293,7 @@ function getStatus() {
     activeScrapes,
     maxQueue: MAX_QUEUE,
     cache: { size: cache.size, ttlSeconds: Math.floor(CACHE_TTL / 1000), entries },
+    puppeteerCircuit: circuitState(),
   };
 }
 
