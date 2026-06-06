@@ -1,5 +1,6 @@
 'use strict';
 const axios = require('axios');
+const { onCircuitBreaker } = require('./puppeteer_resolver');
 let nodemailer;
 try { nodemailer = require('nodemailer'); } catch { nodemailer = null; }
 
@@ -170,6 +171,14 @@ function getHealthStatus() {
     email: getMailer() ? 'configurado' : 'não configurado',
   };
 }
+
+// Alerta imediato quando o circuit breaker do Puppeteer abre
+onCircuitBreaker((pauseMin) => {
+  sendAlert(
+    '⚠️ <b>StreamIMDb — Puppeteer bloqueado</b>',
+    `O Cloudflare Turnstile deixou de auto-resolver.\nCircuit breaker activo por ${pauseMin} min.\n<i>Os streams podem estar indisponíveis durante este período.</i>`,
+  ).catch(() => {});
+});
 
 function startHealthChecks() {
   if (CHECK_INTERVAL === 0) {

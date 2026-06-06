@@ -206,6 +206,7 @@ const CB_FAIL_THRESHOLD = parseInt(process.env.PPT_CB_THRESHOLD)   || 3;
 const CB_COOLDOWN_MS    = parseInt(process.env.PPT_CB_COOLDOWN_MS) || 10 * 60 * 1000; // 10min
 let consecutiveFails = 0;
 let cooldownUntil = 0;
+let onCircuitOpen = null; // callback definido pelo health.js
 
 function circuitState() {
   return {
@@ -214,6 +215,8 @@ function circuitState() {
     cooldownRemainingMs: Math.max(0, cooldownUntil - Date.now()),
   };
 }
+
+function onCircuitBreaker(cb) { onCircuitOpen = cb; }
 
 // ── Resolução: tenta cada provider em sequência ───────────────────────────────
 async function doResolve(imdbId, type, season, episode) {
@@ -251,7 +254,9 @@ async function resolvePuppeteer(imdbId, type, season, episode) {
       if (consecutiveFails >= CB_FAIL_THRESHOLD) {
         cooldownUntil = Date.now() + CB_COOLDOWN_MS;
         consecutiveFails = 0;
-        console.log(`[puppeteer] circuit breaker ACTIVADO — pausa de ${Math.round(CB_COOLDOWN_MS / 60000)}min`);
+        const pauseMin = Math.round(CB_COOLDOWN_MS / 60000);
+        console.log(`[puppeteer] circuit breaker ACTIVADO — pausa de ${pauseMin}min`);
+        if (onCircuitOpen) onCircuitOpen(pauseMin);
         // Fecha o browser para libertar RAM durante o cooldown
         if (browserPromise) {
           try { const b = await browserPromise; await b.close(); } catch (_) {}
@@ -265,4 +270,4 @@ async function resolvePuppeteer(imdbId, type, season, episode) {
   }
 }
 
-module.exports = { resolvePuppeteer, circuitState };
+module.exports = { resolvePuppeteer, circuitState, onCircuitBreaker };
