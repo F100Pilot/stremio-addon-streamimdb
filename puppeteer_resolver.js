@@ -3,10 +3,22 @@
 // Browser partilhado + limite de concorrência + auto-fecho por inatividade.
 // Orientado por lista de PROVIDERS para redundância: se um morre, tenta o seguinte.
 const axios = require('axios');
-let puppeteer;
-try { puppeteer = require('puppeteer'); } catch { puppeteer = null; }
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+// Preferir puppeteer-extra+stealth para passar Cloudflare Turnstile.
+// Fallback para puppeteer normal se não estiver instalado.
+let puppeteer;
+try {
+  const puppeteerExtra = require('puppeteer-extra');
+  const StealthPlugin  = require('puppeteer-extra-plugin-stealth');
+  puppeteerExtra.use(StealthPlugin());
+  puppeteer = puppeteerExtra;
+  console.log('[puppeteer] modo stealth activo');
+} catch {
+  try { puppeteer = require('puppeteer'); console.log('[puppeteer] modo normal (stealth não instalado)'); }
+  catch { puppeteer = null; }
+}
+
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
 const NAV_TIMEOUT    = parseInt(process.env.PPT_NAV_TIMEOUT_MS) || 45000;
 const MAX_CONCURRENT = parseInt(process.env.PPT_CONCURRENCY)    || 2;
