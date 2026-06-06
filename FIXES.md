@@ -307,7 +307,7 @@ segmentos aleatórios).
 
 | ID  | Severidade | Esforço | Estado |
 |-----|-----------|---------|--------|
-| C1  | Crítico   | Alto    | Aberto |
+| C1  | Crítico   | Alto    | ✅ Resolvido (HMAC em proxy_token.js) |
 | A1  | Alto      | Baixo   | Aberto |
 | A2  | Alto      | Baixo   | Aberto |
 | A3  | Alto      | Baixo   | Aberto |
