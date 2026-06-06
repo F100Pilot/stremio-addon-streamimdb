@@ -99,7 +99,7 @@ app.get('/', (req, res) => {
     </div>
     <img class="logo" src="https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png" alt="icon">
     <h1>StreamIMDb Connector</h1>
-    <div class="version">v1.3.0 &nbsp;·&nbsp; Movies &amp; Series</div>
+    <div class="version">v1.4.0 &nbsp;·&nbsp; Movies &amp; Series</div>
     <p>Stream movies and series natively inside Stremio — no browser required.</p>
     <a class="btn btn-install" id="install-btn" href="#">&#9654; Install in Stremio</a>
     <a class="btn btn-donate" href="https://paypal.me/F100Pilot" target="_blank">&#9829; Donate via PayPal</a>
@@ -139,7 +139,7 @@ app.get('/', (req, res) => {
 });
 
 // ── Version check ───────────────────────────────────────────────────────────
-const CURRENT_VERSION = '1.2.0';
+const CURRENT_VERSION = '1.4.0';
 const GH_RELEASES_URL = 'https://api.github.com/repos/F100Pilot/stremio-addon-streamimdb/releases/latest';
 let _versionCache = null;
 let _versionCacheTs = 0;
@@ -172,7 +172,7 @@ app.get('/health', (req, res) => {
   const mem = process.memoryUsage();
   res.json({
     status: 'ok',
-    version: '1.3.0',
+    version: '1.4.0',
     uptimeSeconds: Math.floor((Date.now() - START_TIME) / 1000),
     scraper: getStatus(),
     health: getHealthStatus(),
@@ -204,11 +204,15 @@ function parseRefererMeta(referer) {
   return null;
 }
 
+function originFromReferer(referer) {
+  try { return new URL(referer).origin; } catch { return 'https://brightpathsignals.com'; }
+}
+
 function fetchManifest(url, referer) {
   return axios.get(url, {
     headers: {
       'User-Agent': PROXY_UA,
-      ...(referer ? { Referer: referer, Origin: 'https://brightpathsignals.com' } : {}),
+      ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
     },
     timeout: 10000, responseType: 'text', maxRedirects: 5,
     validateStatus: s => s < 500,
@@ -391,7 +395,7 @@ app.all('/seg/:encoded.ts', async (req, res) => {
       const upstream = await axios.get(segmentUrl, {
         headers: {
           'User-Agent': PROXY_UA,
-          ...(referer ? { Referer: referer, Origin: 'https://brightpathsignals.com' } : {}),
+          ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
           ...(req.headers.range ? { Range: req.headers.range } : {}),
         },
         timeout: 30000, responseType: 'stream', maxRedirects: 5,

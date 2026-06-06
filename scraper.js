@@ -2,6 +2,7 @@
 const axios = require('axios');
 const { fetchFromProviders } = require('./providers');
 const { fetchFromAltSources } = require('./alt_scraper');
+const { resolvePuppeteer } = require('./puppeteer_resolver');
 
 const VAPLAYER_API_URL = process.env.VAPLAYER_API_URL || 'https://streamdata.vaplayer.ru/api.php';
 const BRIGHTPATH_BASE  = 'https://brightpathsignals.com/embed';
@@ -234,7 +235,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   let streams = await fetchPromise;
 
   if (!streams) {
-    console.log('[scraper] Provider principal falhou — a tentar fontes alternativas...');
+    console.log('[scraper] Provider principal falhou — a tentar fontes alternativas (axios)...');
     try {
       streams = await fetchFromAltSources(imdbId, type, season, episode);
       if (streams) {
@@ -243,6 +244,19 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       }
     } catch (e) {
       console.log('[scraper] Fontes alternativas falharam:', e.message);
+    }
+  }
+
+  if (!streams) {
+    console.log('[scraper] A tentar resolver via browser (Puppeteer)...');
+    try {
+      streams = await resolvePuppeteer(imdbId, type, season, episode);
+      if (streams) {
+        console.log('[scraper] Puppeteer OK');
+        setCached(key, streams);
+      }
+    } catch (e) {
+      console.log('[scraper] Puppeteer falhou:', e.message);
     }
   }
 

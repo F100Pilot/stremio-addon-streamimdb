@@ -12,7 +12,7 @@ const SERVER_BASE = (
 
 const manifest = {
   id: 'org.local.streamimdb',
-  version: '1.3.0',
+  version: '1.4.0',
   name: 'StreamIMDb Connector',
   description: 'Stream movies and series via streamimdb.me natively inside Stremio.',
   logo: 'https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png',
@@ -64,7 +64,7 @@ builder.defineStreamHandler(async (args) => {
       const streams = result.streams.map(s => {
         const streamUrl = s.proxyable === false
           ? s.url
-          : makeHlsProxyUrl(s.url, referer);
+          : makeHlsProxyUrl(s.url, s.referer || referer);
         return {
           url:   streamUrl,
           name:  'StreamIMDb',
