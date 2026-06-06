@@ -27,14 +27,14 @@ const providers = makeProviders({
   target: targets.NATIVE,
 });
 
-const TIMEOUT_MS = 15000;
+const TIMEOUT_MS = 30000;
 
-async function searchStreams(tmdbId, type, season, episode) {
+async function searchStreams(tmdbId, type, title, releaseYear, season, episode) {
   const media = {
     type: type === 'series' ? 'show' : 'movie',
     tmdbId: String(tmdbId),
-    releaseYear: undefined,
-    title: undefined,
+    title: title || '',
+    releaseYear: releaseYear || undefined,
   };
 
   if (type === 'series') {
@@ -42,16 +42,23 @@ async function searchStreams(tmdbId, type, season, episode) {
     media.episodeNumber = parseInt(episode, 10);
   }
 
+  console.log(`[providers] A tentar com tmdbId=${tmdbId} title="${title}" year=${releaseYear}`);
+
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    let resolved = null;
 
     const output = await Promise.race([
-      providers.runAll({ media }),
-      new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('timeout'))))
+      providers.runAll({
+        media,
+        events: {
+          update(evt) {
+            if (evt.status === 'success') console.log(`[providers] ✓ ${evt.id}`);
+            else if (evt.status === 'failure') console.log(`[providers] ✗ ${evt.id}: ${evt.reason || ''}`);
+          }
+        }
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS))
     ]);
-
-    clearTimeout(timeoutId);
 
     if (!output?.sources?.length) {
       console.log('[providers] Nenhuma fonte encontrada');
@@ -83,7 +90,7 @@ async function searchStreams(tmdbId, type, season, episode) {
     }).filter(s => s.url);
 
     console.log(`[providers] ${streams.length} stream(s) encontrado(s)`);
-    return streams;
+    return streams.length > 0 ? streams : null;
 
   } catch (err) {
     console.log(`[providers] Erro: ${err.message}`);
@@ -101,19 +108,25 @@ async function convertImdbToTmdb(imdbId) {
   try {
     const res = await fetch(url);
     const data = await res.json();
-    return data?.movie_results?.[0]?.id || data?.tv_results?.[0]?.id || null;
+    const result = data?.movie_results?.[0] || data?.tv_results?.[0] || null;
+    if (!result) return null;
+    return {
+      id: result.id,
+      title: result.title || result.name || '',
+      releaseYear: parseInt((result.release_date || result.first_air_date || '').split('-')[0]) || undefined,
+    };
   } catch {
     return null;
   }
 }
 
 async function fetchFromProviders(imdbId, type, season, episode) {
-  const tmdbId = await convertImdbToTmdb(imdbId);
-  if (!tmdbId) {
+  const tmdb = await convertImdbToTmdb(imdbId);
+  if (!tmdb) {
     console.log('[providers] Falha ao converter IMDb → TMDB');
     return null;
   }
-  return searchStreams(tmdbId, type, season, episode);
+  return searchStreams(tmdb.id, type, tmdb.title, tmdb.releaseYear, season, episode);
 }
 
 module.exports = { fetchFromProviders };
