@@ -13,6 +13,51 @@ const { convertImdbToTmdb } = require('./providers');
 const TIMEOUT = 10000;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
+// ── Legendas ─────────────────────────────────────────────────────────────────
+const LANG_MAP = {
+  english: 'en', portuguese: 'pt', 'portuguese (brazil)': 'pt-BR', 'brazilian portuguese': 'pt-BR',
+  brazilian: 'pt-BR', spanish: 'es', 'spanish (latin america)': 'es-419', french: 'fr',
+  german: 'de', italian: 'it', dutch: 'nl', russian: 'ru', arabic: 'ar', turkish: 'tr',
+  polish: 'pl', romanian: 'ro', japanese: 'ja', korean: 'ko', chinese: 'zh', hindi: 'hi',
+};
+function normalizeLang(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (LANG_MAP[s]) return LANG_MAP[s];
+  if (/^[a-z]{2}(-[a-z0-9]{2,4})?$/i.test(s)) return s;
+  for (const [name, code] of Object.entries(LANG_MAP)) if (s.includes(name)) return code;
+  return s || null;
+}
+
+// Extrai legendas do HTML embed do VixSrc. O player guarda-as num array JSON
+// (ex.: "subtitles":[{"url":"...","lang":"English"}] ou playerjs tracks).
+// Scan abrangente + log p/ diagnóstico do formato real.
+function extractSubsFromHtml(html, baseUrl) {
+  const subs = new Map();
+  if (!html) return [];
+
+  // 1. Objectos JSON com url + lang/label/language (vários formatos).
+  const objRe = /\{[^{}]*?["']?(?:url|file|src)["']?\s*:\s*["']([^"']+\.(?:vtt|srt)[^"']*)["'][^{}]*?\}/gi;
+  let m;
+  while ((m = objRe.exec(html))) {
+    const ctx = m[0];
+    const lang = ctx.match(/["']?(?:lang|language|label|name|srclang)["']?\s*:\s*["']([^"']+)["']/i)?.[1];
+    let abs; try { abs = new URL(m[1].replace(/\\\//g, '/'), baseUrl).href; } catch { abs = m[1]; }
+    if (!subs.has(abs)) subs.set(abs, { url: abs, lang: normalizeLang(lang) });
+  }
+
+  // 2. Fallback: quaisquer URLs .vtt/.srt soltas no HTML.
+  const urlRe = /["'(]((?:https?:)?\/\/[^"'()\s]+\.(?:vtt|srt)(?:\?[^"'()\s]*)?)["')]/gi;
+  while ((m = urlRe.exec(html))) {
+    let abs; try { abs = new URL(m[1].replace(/\\\//g, '/'), baseUrl).href; } catch { abs = m[1]; }
+    if (!subs.has(abs)) subs.set(abs, { url: abs, lang: null });
+  }
+
+  const out = [...subs.values()];
+  if (out.length) console.log(`[dc:vixsrc] ${out.length} legenda(s) extraída(s) do embed`);
+  return out;
+}
+
 // ── VixSrc ─────────────────────────────────────────────────────────────────
 const VIX_BASE = 'https://vixsrc.to';
 const VIX_HEADERS = {
@@ -56,11 +101,15 @@ async function tryVixsrc(tmdbId, type, season, episode) {
     const masterUrl = `${playlist}${sep}token=${token}&expires=${expires}&h=1`;
     console.log(`[dc:vixsrc] ✓ master: ${masterUrl.substring(0, 70)}...`);
 
+    // Legendas: o player do VixSrc lista-as no HTML embed.
+    const subtitles = extractSubsFromHtml(html, VIX_BASE).map(s => ({ ...s, referer: VIX_BASE + '/' }));
+    if (!subtitles.length) console.log('[dc:vixsrc] sem legendas no embed (formato novo? colar trecho do HTML)');
+
     // proxyable:false — entregamos o URL directo da CDN. O nosso proxy corre
     // num IP de datacenter do Vercel, que a CDN bloqueia com 403 (mesmo anti-bot
     // que bloqueia a API). O cliente Stremio corre no IP residencial do
     // utilizador, que tem mais probabilidade de passar.
-    return [{ url: masterUrl, quality: 'Auto', proxyable: false, referer: apiUrl }];
+    return [{ url: masterUrl, quality: 'Auto', proxyable: false, referer: apiUrl, subtitles }];
   } catch (e) {
     console.log(`[dc:vixsrc] erro: ${e.message}`);
     return null;
