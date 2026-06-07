@@ -1,6 +1,6 @@
 'use strict';
 const { addonBuilder } = require('stremio-addon-sdk');
-const { fetchVideoSource } = require('./scraper');
+const { fetchVideoSource, fetchSubtitles } = require('./scraper');
 const { sign } = require('./proxy_token');
 
 const BRIGHTPATH_BASE = 'https://brightpathsignals.com/embed';
@@ -19,7 +19,7 @@ const manifest = {
   logo: 'https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png',
   types: ['movie', 'series'],
   catalogs: [],
-  resources: ['stream'],
+  resources: ['stream', 'subtitles'],
   idPrefixes: ['tt']
 };
 
@@ -28,6 +28,11 @@ const builder = new addonBuilder(manifest);
 function makeHlsProxyUrl(streamUrl, referer) {
   const token = sign({ u: streamUrl, r: referer });
   return `${SERVER_BASE}/hls/${token}.m3u8`;
+}
+
+function makeSubProxyUrl(subUrl, referer) {
+  const token = sign({ u: subUrl, r: referer });
+  return `${SERVER_BASE}/sub/${token}.vtt`;
 }
 
 builder.defineStreamHandler(async (args) => {
@@ -81,6 +86,37 @@ builder.defineStreamHandler(async (args) => {
   } catch (err) {
     console.error(`[handler] Erro inesperado: ${err.message}`);
     return { streams: [] };
+  }
+});
+
+builder.defineSubtitlesHandler(async (args) => {
+  try {
+    const parts = args.id.split(':');
+    const imdbId = parts[0];
+    const type = parts.length > 1 ? 'series' : 'movie';
+    const season = parts[1] || null;
+    const episode = parts[2] || null;
+
+    const referer = type === 'series'
+      ? `${BRIGHTPATH_BASE}/tv/${imdbId}/${season}/${episode}`
+      : `${BRIGHTPATH_BASE}/movie/${imdbId}`;
+
+    const subs = await fetchSubtitles(imdbId, type, season, episode);
+    if (!subs || !subs.length) return { subtitles: [] };
+
+    const seen = new Set();
+    const subtitles = subs.map((s, i) => {
+      const lang = s.lang || 'und';
+      let id = lang;
+      while (seen.has(id)) id = `${lang}-${i}`;
+      seen.add(id);
+      return { id, lang, url: makeSubProxyUrl(s.url, s.referer || referer) };
+    });
+    console.log(`[handler] ${subtitles.length} legenda(s) para ${args.id}`);
+    return { subtitles };
+  } catch (err) {
+    console.error(`[handler/subs] Erro: ${err.message}`);
+    return { subtitles: [] };
   }
 });
 

@@ -27,6 +27,40 @@ const PER_PROVIDER_MS = parseInt(process.env.PPT_PROVIDER_MS)   || 22000;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// ── Legendas ───────────────────────────────────────────────────────────────
+// URLs de faixas de legendas vistas na rede durante a resolução.
+const SUB_RE = /\.(vtt|srt)(\?|$)/i;
+const SUB_HINT_RE = /subtitle|caption|\/subs?\//i;
+
+// Mapeia nomes/códigos comuns → código ISO de 2 letras p/ o Stremio.
+const LANG_MAP = {
+  english: 'en', portuguese: 'pt', 'portuguese (brazil)': 'pt-BR', brazilian: 'pt-BR',
+  spanish: 'es', french: 'fr', german: 'de', italian: 'it', dutch: 'nl',
+  russian: 'ru', arabic: 'ar', turkish: 'tr', polish: 'pl', romanian: 'ro',
+  japanese: 'ja', korean: 'ko', chinese: 'zh', hindi: 'hi',
+};
+function normalizeLang(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (LANG_MAP[s]) return LANG_MAP[s];
+  if (/^[a-z]{2}(-[a-z]{2})?$/i.test(s)) return s;
+  for (const [name, code] of Object.entries(LANG_MAP)) if (s.includes(name)) return code;
+  return s || null;
+}
+// Tenta adivinhar o idioma a partir do URL (ex.: .../eng.vtt, ?lang=pt, /English-2.vtt).
+function guessLangFromUrl(url) {
+  try {
+    const u = new URL(url);
+    const q = u.searchParams.get('lang') || u.searchParams.get('language');
+    if (q) return normalizeLang(q);
+    const file = decodeURIComponent(u.pathname.split('/').pop() || '');
+    const m = file.match(/([a-z]{2,3}|english|portuguese|spanish|french|german|italian|arabic|turkish|russian)/i);
+    if (m) return normalizeLang(m[1]);
+  } catch (_) {}
+  return null;
+}
+
+
 // ── PROVIDERS ────────────────────────────────────────────────────────────────
 // mode 'extract': axios busca o embed → extrai a iframe do player → carrega-a numa
 //   página limpa na origin do provider (evita anti-bot/ads). Comprovado p/ streamimdb.
@@ -114,7 +148,35 @@ function release() {
 }
 
 // ── Captura genérica numa página ──────────────────────────────────────────────
-// Devolve { url, referer } do primeiro .m3u8 visto, ou null.
+// Busca o master m3u8 e extrai as faixas #EXT-X-MEDIA:TYPE=SUBTITLES.
+// Devolve [{ url, lang }]. Falha silenciosa (devolve []).
+async function subsFromMaster(masterUrl, referer) {
+  try {
+    const res = await axios.get(masterUrl, {
+      headers: {
+        'User-Agent': UA,
+        ...(referer ? { Referer: referer } : {}),
+      },
+      timeout: 10000, responseType: 'text', maxRedirects: 5, validateStatus: s => s < 500,
+    });
+    const body = typeof res.data === 'string' ? res.data : '';
+    if (!body.includes('#EXT-X-MEDIA')) return [];
+    const out = [];
+    for (const line of body.split('\n')) {
+      const t = line.trim();
+      if (!/^#EXT-X-MEDIA:.*TYPE=SUBTITLES/i.test(t)) continue;
+      const uriM  = t.match(/URI="([^"]+)"/);
+      if (!uriM) continue;
+      const langM = t.match(/LANGUAGE="([^"]+)"/i);
+      const nameM = t.match(/NAME="([^"]+)"/i);
+      let abs; try { abs = new URL(uriM[1], masterUrl).href; } catch { abs = uriM[1]; }
+      out.push({ url: abs, lang: normalizeLang(langM?.[1]) || normalizeLang(nameM?.[1]) || guessLangFromUrl(abs) });
+    }
+    return out;
+  } catch (_) { return []; }
+}
+
+// Devolve { url, referer, subtitles } do primeiro .m3u8 visto, ou null.
 async function captureOnPage(browser, provider, embedUrl) {
   const page = await browser.newPage();
   activePages++;
@@ -148,6 +210,7 @@ async function captureOnPage(browser, provider, embedUrl) {
 
     let captured = null;
     let capturedReferer = null;
+    const subsByUrl = new Map(); // url → { url, lang }
 
     await page.setRequestInterception(true);
     page.on('request', req => {
@@ -160,6 +223,11 @@ async function captureOnPage(browser, provider, embedUrl) {
         if (!captured && url.includes('.m3u8')) {
           captured = url;
           capturedReferer = req.headers().referer || null;
+        }
+        // Faixas de legendas pedidas pelo player (ficheiros .vtt/.srt soltos).
+        if ((SUB_RE.test(url) || SUB_HINT_RE.test(url)) && !subsByUrl.has(url)) {
+          subsByUrl.set(url, { url, lang: guessLangFromUrl(url) });
+          console.log(`[puppeteer:${provider.name}] legenda vista: ${url.substring(0, 90)}`);
         }
         if (AD_RE.test(url)) return req.abort();
         req.continue();
@@ -182,8 +250,18 @@ async function captureOnPage(browser, provider, embedUrl) {
       // Referer: o que foi capturado, ou a origin do próprio m3u8/embed
       let referer = capturedReferer;
       if (!referer) { try { referer = new URL(embedUrl).origin + '/'; } catch { referer = ''; } }
-      result = { url: captured, referer };
-      console.log(`[puppeteer:${provider.name}] ✓ m3u8: ${captured.substring(0, 70)}...`);
+
+      // Legendas embebidas no master m3u8 (#EXT-X-MEDIA:TYPE=SUBTITLES) +
+      // as faixas .vtt/.srt vistas soltas na rede. Combina e deduplica.
+      const fromMaster = await subsFromMaster(captured, referer).catch(() => []);
+      const subsMap = new Map();
+      for (const s of [...subsByUrl.values(), ...fromMaster]) {
+        if (s && s.url && !subsMap.has(s.url)) subsMap.set(s.url, s);
+      }
+      const subtitles = [...subsMap.values()];
+
+      result = { url: captured, referer, subtitles };
+      console.log(`[puppeteer:${provider.name}] ✓ m3u8: ${captured.substring(0, 70)}... (${subtitles.length} legenda(s))`);
     } else {
       console.log(`[puppeteer:${provider.name}] ✗ sem m3u8`);
     }
@@ -226,7 +304,7 @@ async function doResolve(imdbId, type, season, episode) {
     try { embedUrl = provider.embed(imdbId, type, season, episode); } catch { continue; }
     const r = await captureOnPage(browser, provider, embedUrl);
     if (r && r.url) {
-      return [{ url: r.url, quality: 'Auto', proxyable: true, referer: r.referer }];
+      return [{ url: r.url, quality: 'Auto', proxyable: true, referer: r.referer, subtitles: r.subtitles || [] }];
     }
   }
   return null;

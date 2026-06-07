@@ -458,6 +458,52 @@ app.all('/seg/:encoded.ts', async (req, res) => {
     }
   }
 });
+
+// Converte SRT → WebVTT (Stremio aceita ambos, mas servimos sempre VTT).
+function srtToVtt(srt) {
+  const body = srt
+    .replace(/\r+/g, '')
+    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2'); // vírgula → ponto nos timestamps
+  return 'WEBVTT\n\n' + body.trim() + '\n';
+}
+
+// Proxy de legendas (.vtt/.srt): busca com Referer, converte SRT→VTT, devolve VTT.
+app.all('/sub/:encoded.vtt', async (req, res) => {
+  if (req.method === 'HEAD' || req.method === 'OPTIONS') {
+    res.set('Content-Type', 'text/vtt; charset=utf-8');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Range, Content-Type');
+    return res.status(200).end();
+  }
+  const data = decodeProxy(req.params.encoded);
+  if (!data?.u) return res.status(400).send('Bad request');
+  const referer = data.r || '';
+
+  try {
+    const upstream = await axios.get(data.u, {
+      headers: {
+        'User-Agent': PROXY_UA,
+        ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
+      },
+      timeout: 15000, responseType: 'text', maxRedirects: 5,
+      httpAgent, httpsAgent, validateStatus: s => s < 500,
+    });
+    if (upstream.status !== 200) return res.status(upstream.status).send('Subtitle error');
+
+    let txt = typeof upstream.data === 'string' ? upstream.data : '';
+    const isVtt = /^﻿?WEBVTT/.test(txt) || /\.vtt(\?|$)/i.test(data.u);
+    if (!isVtt) txt = srtToVtt(txt);
+
+    res.set('Content-Type', 'text/vtt; charset=utf-8');
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.send(txt);
+  } catch (err) {
+    console.error('[proxy/sub] falhou:', err.message);
+    if (!res.headersSent) res.status(502).send('Proxy error');
+  }
+});
 // ─────────────────────────────────────────────────────────────────────────────
 
 const server = app.listen(PORT, () => {

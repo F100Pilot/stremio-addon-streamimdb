@@ -102,6 +102,21 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   return streams ? { streams, type: 'direct' } : null;
 }
 
+// Devolve as legendas associadas ao título (capturadas na resolução do stream).
+// Reaproveita a cache; se não houver, resolve o stream (que as popula).
+async function fetchSubtitles(imdbId, type = 'movie', season = null, episode = null) {
+  try {
+    const result = await fetchVideoSource(imdbId, type, season, episode);
+    const streams = result?.streams || [];
+    for (const s of streams) {
+      if (Array.isArray(s.subtitles) && s.subtitles.length) return s.subtitles;
+    }
+  } catch (e) {
+    console.log('[subs] fetchSubtitles falhou:', e.message);
+  }
+  return [];
+}
+
 function invalidateCache(imdbId, type, season, episode) {
   const key = cacheKey(imdbId, type, season, episode);
   const had = cache.delete(key);
@@ -123,4 +138,4 @@ function getStatus() {
   };
 }
 
-module.exports = { fetchVideoSource, getStatus, invalidateCache, cacheKey, getMfCache };
+module.exports = { fetchVideoSource, fetchSubtitles, getStatus, invalidateCache, cacheKey, getMfCache };
