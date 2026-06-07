@@ -1,6 +1,7 @@
 'use strict';
 const { fetchFromProviders } = require('./providers');
 const { fetchFromAltSources } = require('./alt_scraper');
+const { fetchFromDatacenterSources } = require('./datacenter_scraper');
 const { resolvePuppeteer, circuitState } = require('./puppeteer_resolver');
 
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000;
@@ -61,20 +62,29 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   activeScrapes++;
 
   const fetchPromise = (async () => {
-    // 1. alt_scraper (axios rápido — falha no Turnstile mas tenta na mesma)
+    // 1. datacenter_scraper (VixSrc, Vidlink) — só axios, mais rápido; URLs
+    // entregues directo ao cliente (proxyable:false), que tenta com o seu
+    // próprio IP residencial. Vale sempre a pena tentar primeiro: evita
+    // acordar o Puppeteer quando estas fontes resolvem.
+    try {
+      const streams = await fetchFromDatacenterSources(imdbId, type, season, episode);
+      if (streams) { console.log('[scraper] datacenter sources OK'); setCached(key, streams); return streams; }
+    } catch (e) { console.log('[scraper] datacenter sources falhou:', e.message); }
+
+    // 2. alt_scraper (axios rápido — falha no Turnstile mas tenta na mesma)
     try {
       const streams = await fetchFromAltSources(imdbId, type, season, episode);
       if (streams) { console.log('[scraper] alt_scraper OK'); setCached(key, streams); return streams; }
     } catch (e) { console.log('[scraper] alt_scraper falhou:', e.message); }
 
-    // 2. Puppeteer (passa o Turnstile via headful + Xvfb)
+    // 3. Puppeteer (passa o Turnstile via headful + Xvfb)
     console.log('[scraper] A tentar resolver via browser (Puppeteer)...');
     try {
       const streams = await resolvePuppeteer(imdbId, type, season, episode);
       if (streams) { console.log('[scraper] Puppeteer OK'); setCached(key, streams); return streams; }
     } catch (e) { console.log('[scraper] Puppeteer falhou:', e.message); }
 
-    // 3. movie-web providers (último recurso, lento)
+    // 4. movie-web providers (último recurso, lento)
     console.log('[scraper] A tentar movie-web providers...');
     try {
       const streams = await fetchFromProviders(imdbId, type, season, episode);

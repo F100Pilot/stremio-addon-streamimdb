@@ -129,4 +129,4 @@ async function fetchFromProviders(imdbId, type, season, episode) {
   return searchStreams(tmdb.id, type, tmdb.title, tmdb.releaseYear, season, episode);
 }
 
-module.exports = { fetchFromProviders };
+module.exports = { fetchFromProviders, convertImdbToTmdb };
