@@ -358,7 +358,8 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     return res.status(200).end();
   }
   const data = decodeProxy(req.params.encoded);
-  if (!data?.u) return res.status(400).send('Bad request');
+  if (!data?.u) { console.log('[proxy/hls] token inválido'); return res.status(400).send('Bad request'); }
+  console.log(`[proxy/hls] ⇢ ${req.method} ${data.u.substring(0, 80)}`);
 
   let manifestUrl = data.u;
   let upstream = null;
@@ -400,11 +401,15 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     if (!upstream) return res.status(502).send('Proxy error');
   }
 
-  if (upstream.status !== 200) return res.status(upstream.status).send('CDN error');
+  if (upstream.status !== 200) {
+    console.log(`[proxy/hls] ✗ CDN ${upstream.status} para ${manifestUrl.substring(0, 70)}`);
+    return res.status(upstream.status).send('CDN error');
+  }
 
   const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
   const ref  = data.r || '';
   const body = rewriteManifest(upstream.data, manifestUrl, base, ref);
+  console.log(`[proxy/hls] ✓ ${body.length} bytes`);
 
   res.set('Content-Type', 'application/x-mpegURL');
   res.set('Cache-Control', 'no-cache');
@@ -425,7 +430,8 @@ app.all('/seg/:encoded.ts', async (req, res) => {
     return res.status(200).end();
   }
   const data = decodeProxy(req.params.encoded);
-  if (!data?.u) return res.status(400).send('Bad request');
+  if (!data?.u) { console.log('[proxy/seg] token inválido'); return res.status(400).send('Bad request'); }
+  console.log(`[proxy/seg] ⇢ ${req.method} ${data.u.substring(0, 80)}`);
 
   const MAX_SEG_RETRIES = parseInt(process.env.MAX_SEG_RETRIES) || 1;
   let segmentUrl = data.u;
