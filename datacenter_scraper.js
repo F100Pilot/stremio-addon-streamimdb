@@ -144,11 +144,13 @@ async function tryVixsrc(tmdbId, type, season, episode) {
     subtitles = subtitles.map(s => ({ ...s, referer: VIX_BASE + '/' }));
     if (!subtitles.length) console.log('[dc:vixsrc] sem legendas (nem embed nem master) — fonte pode não ter');
 
-    // proxyable:false — entregamos o URL directo da CDN. O nosso proxy corre
-    // num IP de datacenter do Vercel, que a CDN bloqueia com 403 (mesmo anti-bot
-    // que bloqueia a API). O cliente Stremio corre no IP residencial do
-    // utilizador, que tem mais probabilidade de passar.
-    return [{ url: masterUrl, quality: 'Auto', proxyable: false, referer: apiUrl, subtitles }];
+    // proxyable:true — na branch Server (Proxmox, IP residencial de casa) é o
+    // nosso proxy que tem o IP "bom"; o cliente Stremio pode estar nalgum lado
+    // com IP problemático (datacenter, VPN/Tailscale, hotel). Faz mais sentido
+    // que o nosso servidor busque a CDN e sirva o cliente via /hls.
+    // (Nota: se isto for usado num deploy datacenter — ex. Vercel — o inverso
+    // é que se aplica: aí proxyable:false é a escolha certa.)
+    return [{ url: masterUrl, quality: 'Auto', proxyable: true, referer: apiUrl, subtitles }];
   } catch (e) {
     console.log(`[dc:vixsrc] erro: ${e.message}`);
     return null;
@@ -180,9 +182,9 @@ async function tryVidlink(tmdbId, type, season, episode) {
     if (!playlist) { console.log('[dc:vidlink] sem playlist'); return null; }
 
     console.log(`[dc:vidlink] ✓ playlist: ${playlist.substring(0, 70)}...`);
-    // proxyable:false — ver nota em tryVixsrc: a CDN bloqueia o IP de
-    // datacenter do nosso proxy; o cliente (IP residencial) tenta directo.
-    return [{ url: playlist, quality: 'Auto', proxyable: false, referer: VIDLINK_REF + '/' }];
+    // proxyable:true — ver nota em tryVixsrc: na branch Server o nosso proxy
+    // tem o IP residencial bom, por isso serve melhor de intermediário.
+    return [{ url: playlist, quality: 'Auto', proxyable: true, referer: VIDLINK_REF + '/' }];
   } catch (e) {
     console.log(`[dc:vidlink] erro: ${e.message}`);
     return null;
