@@ -256,6 +256,13 @@ function rewriteManifest(body, manifestUrl, base, ref) {
       prevTag = t;
       return t.replace(/URI="([^"]+)"/, (_, uri) => `URI="${proxifyUri(uri, manifestUrl, base, ref, false)}"`);
     }
+    // #EXT-X-KEY / #EXT-X-SESSION-KEY → chave de desencriptação AES (bytes).
+    // Sem isto, o URI relativo (ex.: "/storage/enc.key") resolveria contra o
+    // NOSSO domínio → 404 → o player fica preso a carregar (não desencripta).
+    if ((t.startsWith('#EXT-X-KEY') || t.startsWith('#EXT-X-SESSION-KEY')) && /URI="([^"]+)"/.test(t)) {
+      prevTag = t;
+      return t.replace(/URI="([^"]+)"/, (_, uri) => `URI="${proxifyUri(uri, manifestUrl, base, ref, false)}"`);
+    }
     if (t.startsWith('#')) { prevTag = t; return line; }
 
     // Linha de URI: variante de vídeo (precedida de #EXT-X-STREAM-INF) → /hls;
@@ -406,9 +413,12 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     return res.status(upstream.status).send('CDN error');
   }
 
-  const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
+  // URL efectivo após redirects: URIs relativas (ex.: a chave AES "/storage/enc.key")
+  // têm de resolver contra a CDN final, não contra o URL vixsrc.to original.
+  const effectiveUrl = upstream.request?.res?.responseUrl || upstream.request?.responseURL || manifestUrl;
+  const base = effectiveUrl.substring(0, effectiveUrl.lastIndexOf('/') + 1);
   const ref  = data.r || '';
-  const body = rewriteManifest(upstream.data, manifestUrl, base, ref);
+  const body = rewriteManifest(upstream.data, effectiveUrl, base, ref);
   console.log(`[proxy/hls] ✓ ${body.length} bytes`);
 
   res.set('Content-Type', 'application/x-mpegURL');
