@@ -32,30 +32,57 @@ function normalizeLang(raw) {
 // Extrai legendas do HTML embed do VixSrc. O player guarda-as num array JSON
 // (ex.: "subtitles":[{"url":"...","lang":"English"}] ou playerjs tracks).
 // Scan abrangente + log p/ diagnóstico do formato real.
+// VTTs que NÃO são legendas (miniaturas/storyboard de pré-visualização).
+const NOT_A_SUB_RE = /thumbnail|storyboard|sprite|preview|seek|chapters?/i;
+
 function extractSubsFromHtml(html, baseUrl) {
   const subs = new Map();
   if (!html) return [];
+  const add = (rawUrl, lang) => {
+    let abs; try { abs = new URL(rawUrl.replace(/\\\//g, '/'), baseUrl).href; } catch { abs = rawUrl; }
+    if (NOT_A_SUB_RE.test(abs)) return; // ignora thumbnails/storyboard .vtt
+    if (!subs.has(abs)) subs.set(abs, { url: abs, lang: normalizeLang(lang) });
+  };
 
   // 1. Objectos JSON com url + lang/label/language (vários formatos).
   const objRe = /\{[^{}]*?["']?(?:url|file|src)["']?\s*:\s*["']([^"']+\.(?:vtt|srt)[^"']*)["'][^{}]*?\}/gi;
   let m;
   while ((m = objRe.exec(html))) {
-    const ctx = m[0];
-    const lang = ctx.match(/["']?(?:lang|language|label|name|srclang)["']?\s*:\s*["']([^"']+)["']/i)?.[1];
-    let abs; try { abs = new URL(m[1].replace(/\\\//g, '/'), baseUrl).href; } catch { abs = m[1]; }
-    if (!subs.has(abs)) subs.set(abs, { url: abs, lang: normalizeLang(lang) });
+    const lang = m[0].match(/["']?(?:lang|language|label|name|srclang)["']?\s*:\s*["']([^"']+)["']/i)?.[1];
+    add(m[1], lang);
   }
 
   // 2. Fallback: quaisquer URLs .vtt/.srt soltas no HTML.
   const urlRe = /["'(]((?:https?:)?\/\/[^"'()\s]+\.(?:vtt|srt)(?:\?[^"'()\s]*)?)["')]/gi;
-  while ((m = urlRe.exec(html))) {
-    let abs; try { abs = new URL(m[1].replace(/\\\//g, '/'), baseUrl).href; } catch { abs = m[1]; }
-    if (!subs.has(abs)) subs.set(abs, { url: abs, lang: null });
-  }
+  while ((m = urlRe.exec(html))) add(m[1], null);
 
   const out = [...subs.values()];
   if (out.length) console.log(`[dc:vixsrc] ${out.length} legenda(s) extraída(s) do embed`);
   return out;
+}
+
+// Busca o master m3u8 e extrai faixas #EXT-X-MEDIA:TYPE=SUBTITLES → [{url, lang}].
+async function subsFromMaster(masterUrl, referer) {
+  try {
+    const res = await axios.get(masterUrl, {
+      headers: { 'User-Agent': UA, ...(referer ? { Referer: referer } : {}) },
+      timeout: TIMEOUT, responseType: 'text', maxRedirects: 5, validateStatus: s => s < 500,
+    });
+    const body = typeof res.data === 'string' ? res.data : '';
+    if (!body.includes('#EXT-X-MEDIA')) return [];
+    const out = [];
+    for (const line of body.split('\n')) {
+      const t = line.trim();
+      if (!/^#EXT-X-MEDIA:.*TYPE=SUBTITLES/i.test(t)) continue;
+      const uri = t.match(/URI="([^"]+)"/)?.[1];
+      if (!uri) continue;
+      const lang = t.match(/LANGUAGE="([^"]+)"/i)?.[1] || t.match(/NAME="([^"]+)"/i)?.[1];
+      let abs; try { abs = new URL(uri, masterUrl).href; } catch { abs = uri; }
+      out.push({ url: abs, lang: normalizeLang(lang) });
+    }
+    if (out.length) console.log(`[dc:vixsrc] ${out.length} legenda(s) no master m3u8`);
+    return out;
+  } catch (e) { console.log('[dc:vixsrc] subsFromMaster erro:', e.message); return []; }
 }
 
 // ── VixSrc ─────────────────────────────────────────────────────────────────
@@ -101,9 +128,11 @@ async function tryVixsrc(tmdbId, type, season, episode) {
     const masterUrl = `${playlist}${sep}token=${token}&expires=${expires}&h=1`;
     console.log(`[dc:vixsrc] ✓ master: ${masterUrl.substring(0, 70)}...`);
 
-    // Legendas: o player do VixSrc lista-as no HTML embed.
-    const subtitles = extractSubsFromHtml(html, VIX_BASE).map(s => ({ ...s, referer: VIX_BASE + '/' }));
-    if (!subtitles.length) console.log('[dc:vixsrc] sem legendas no embed (formato novo? colar trecho do HTML)');
+    // Legendas: tenta o HTML embed e, se nada, o master m3u8 (#EXT-X-MEDIA).
+    let subtitles = extractSubsFromHtml(html, VIX_BASE);
+    if (!subtitles.length) subtitles = await subsFromMaster(masterUrl, VIX_BASE + '/');
+    subtitles = subtitles.map(s => ({ ...s, referer: VIX_BASE + '/' }));
+    if (!subtitles.length) console.log('[dc:vixsrc] sem legendas (nem embed nem master) — fonte pode não ter');
 
     // proxyable:false — entregamos o URL directo da CDN. O nosso proxy corre
     // num IP de datacenter do Vercel, que a CDN bloqueia com 403 (mesmo anti-bot

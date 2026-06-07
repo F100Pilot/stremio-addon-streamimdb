@@ -489,9 +489,15 @@ app.all('/sub/:encoded.vtt', async (req, res) => {
       timeout: 15000, responseType: 'text', maxRedirects: 5,
       httpAgent, httpsAgent, validateStatus: s => s < 500,
     });
-    if (upstream.status !== 200) return res.status(upstream.status).send('Subtitle error');
+    if (upstream.status !== 200) {
+      console.log(`[proxy/sub] upstream ${upstream.status} para ${data.u.substring(0, 90)}`);
+      return res.status(upstream.status).send('Subtitle error');
+    }
 
     let txt = typeof upstream.data === 'string' ? upstream.data : '';
+    const head = txt.slice(0, 80).replace(/\n/g, '\\n');
+    console.log(`[proxy/sub] ${txt.length} bytes de ${data.u.substring(0, 70)} — início: ${head}`);
+
     const isVtt = /^﻿?WEBVTT/.test(txt) || /\.vtt(\?|$)/i.test(data.u);
     if (!isVtt) txt = srtToVtt(txt);
 
