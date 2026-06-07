@@ -495,10 +495,30 @@ app.all('/sub/:encoded.vtt', async (req, res) => {
     }
 
     let txt = typeof upstream.data === 'string' ? upstream.data : '';
-    const head = txt.slice(0, 80).replace(/\n/g, '\\n');
-    console.log(`[proxy/sub] ${txt.length} bytes de ${data.u.substring(0, 70)} — início: ${head}`);
+    let srcUrl = data.u;
 
-    const isVtt = /^﻿?WEBVTT/.test(txt) || /\.vtt(\?|$)/i.test(data.u);
+    // As faixas SUBTITLES do HLS (ex.: VixSrc) são playlists m3u8 que apontam
+    // para o(s) segmento(s) .vtt. Se vier um m3u8, resolve até ao .vtt real.
+    if (txt.trimStart().startsWith('#EXTM3U')) {
+      const seg = txt.split('\n').map(l => l.trim())
+        .find(l => l && !l.startsWith('#') && /\.(vtt|srt)(\?|$)/i.test(l))
+        || txt.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#'));
+      if (!seg) { console.log('[proxy/sub] m3u8 de legenda sem segmento'); return res.status(502).send('No subtitle segment'); }
+      let segUrl; try { segUrl = new URL(seg, srcUrl).href; } catch { segUrl = seg; }
+      console.log(`[proxy/sub] m3u8 → segmento: ${segUrl.substring(0, 80)}`);
+      const segRes = await axios.get(segUrl, {
+        headers: { 'User-Agent': PROXY_UA, ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}) },
+        timeout: 15000, responseType: 'text', maxRedirects: 5, httpAgent, httpsAgent, validateStatus: s => s < 500,
+      });
+      if (segRes.status !== 200) return res.status(segRes.status).send('Subtitle segment error');
+      txt = typeof segRes.data === 'string' ? segRes.data : '';
+      srcUrl = segUrl;
+    }
+
+    const head = txt.slice(0, 60).replace(/\n/g, '\\n');
+    console.log(`[proxy/sub] ${txt.length} bytes — início: ${head}`);
+
+    const isVtt = /^﻿?WEBVTT/.test(txt) || /\.vtt(\?|$)/i.test(srcUrl);
     if (!isVtt) txt = srtToVtt(txt);
 
     res.set('Content-Type', 'text/vtt; charset=utf-8');

@@ -106,11 +106,11 @@ builder.defineSubtitlesHandler(async (args) => {
 
     const seen = new Set();
     const subtitles = subs.map((s, i) => {
-      const lang = s.lang || 'und';
-      let id = lang;
-      while (seen.has(id)) id = `${lang}-${i}`;
+      const label = s.name || s.lang || 'und';   // texto mostrado no Stremio
+      let id = `${s.lang || 'und'}-${i}`;
+      while (seen.has(id)) id = `${id}_`;
       seen.add(id);
-      return { id, lang, url: makeSubProxyUrl(s.url, s.referer || referer) };
+      return { id, lang: label, url: makeSubProxyUrl(s.url, s.referer || referer) };
     });
     console.log(`[handler] ${subtitles.length} legenda(s) para ${args.id}`);
     return { subtitles };

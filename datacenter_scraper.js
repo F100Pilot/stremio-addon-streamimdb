@@ -20,9 +20,18 @@ const LANG_MAP = {
   german: 'de', italian: 'it', dutch: 'nl', russian: 'ru', arabic: 'ar', turkish: 'tr',
   polish: 'pl', romanian: 'ro', japanese: 'ja', korean: 'ko', chinese: 'zh', hindi: 'hi',
 };
+// ISO 639-2 (códigos de 3 letras do m3u8 do VixSrc) → ISO 639-1.
+const ISO3 = {
+  eng: 'en', por: 'pt', spa: 'es', fre: 'fr', fra: 'fr', ger: 'de', deu: 'de',
+  ita: 'it', dut: 'nl', nld: 'nl', rus: 'ru', ara: 'ar', tur: 'tr', pol: 'pl',
+  rum: 'ro', ron: 'ro', jpn: 'ja', kor: 'ko', chi: 'zh', zho: 'zh', hin: 'hi',
+  cze: 'cs', ces: 'cs', dan: 'da', gre: 'el', ell: 'el', fin: 'fi', hun: 'hu',
+  nor: 'no', swe: 'sv',
+};
 function normalizeLang(raw) {
   if (!raw) return null;
-  const s = String(raw).trim().toLowerCase();
+  const s = String(raw).trim().toLowerCase().replace(/^forced-/, '');
+  if (ISO3[s]) return ISO3[s];
   if (LANG_MAP[s]) return LANG_MAP[s];
   if (/^[a-z]{2}(-[a-z0-9]{2,4})?$/i.test(s)) return s;
   for (const [name, code] of Object.entries(LANG_MAP)) if (s.includes(name)) return code;
@@ -76,9 +85,10 @@ async function subsFromMaster(masterUrl, referer) {
       if (!/^#EXT-X-MEDIA:.*TYPE=SUBTITLES/i.test(t)) continue;
       const uri = t.match(/URI="([^"]+)"/)?.[1];
       if (!uri) continue;
-      const lang = t.match(/LANGUAGE="([^"]+)"/i)?.[1] || t.match(/NAME="([^"]+)"/i)?.[1];
+      const name = t.match(/NAME="([^"]+)"/i)?.[1];
+      const langAttr = t.match(/LANGUAGE="([^"]+)"/i)?.[1];
       let abs; try { abs = new URL(uri, masterUrl).href; } catch { abs = uri; }
-      out.push({ url: abs, lang: normalizeLang(lang) });
+      out.push({ url: abs, lang: normalizeLang(langAttr || name), name: name || null });
     }
     if (out.length) console.log(`[dc:vixsrc] ${out.length} legenda(s) no master m3u8`);
     return out;
