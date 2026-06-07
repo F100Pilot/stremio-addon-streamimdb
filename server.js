@@ -208,6 +208,31 @@ function originFromReferer(referer) {
   try { return new URL(referer).origin; } catch { return 'https://brightpathsignals.com'; }
 }
 
+// Rewrites a single manifest line so every URI it carries goes through our proxy:
+// - plain URI lines (variants/segments)
+// - #EXT-X-MEDIA tags with URI="..." (subtitle/audio tracks) — these were being
+//   left untouched, so the player fetched them straight from the CDN without the
+//   right Referer/Origin and failed ("pode existir um erro do addon" nas legendas).
+function proxifyUri(rawUri, manifestUrl, base, ref) {
+  let abs; try { abs = new URL(rawUri, manifestUrl).href; } catch { abs = rawUri; }
+  const tok = sign({ u: abs, r: ref, b: base });
+  return abs.includes('.m3u8')
+    ? `${SERVER_BASE}/hls/${tok}.m3u8`
+    : `${SERVER_BASE}/seg/${tok}.ts`;
+}
+
+function rewriteManifestLine(line, manifestUrl, base, ref) {
+  const t = line.trim();
+  if (!t) return line;
+
+  if (t.startsWith('#EXT-X-MEDIA') && /URI="([^"]+)"/.test(t)) {
+    return t.replace(/URI="([^"]+)"/, (_, uri) => `URI="${proxifyUri(uri, manifestUrl, base, ref)}"`);
+  }
+  if (t.startsWith('#')) return line;
+
+  return proxifyUri(t, manifestUrl, base, ref);
+}
+
 function fetchManifest(url, referer) {
   return axios.get(url, {
     headers: {
@@ -310,15 +335,9 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     console.log('[proxy/hls] manifest servido do mfCache');
     const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
     const ref  = data.r || '';
-    const body = cachedBody.split('\n').map(line => {
-      const t = line.trim();
-      if (!t || t.startsWith('#')) return line;
-      let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
-      const tok = sign({ u: abs, r: ref, b: base });
-      return abs.includes('.m3u8')
-        ? `${SERVER_BASE}/hls/${tok}.m3u8`
-        : `${SERVER_BASE}/seg/${tok}.ts`;
-    }).join('\n');
+    const body = cachedBody.split('\n')
+      .map(line => rewriteManifestLine(line, manifestUrl, base, ref))
+      .join('\n');
     res.set('Content-Type', 'application/x-mpegURL');
     res.set('Cache-Control', 'no-cache');
     res.set('Access-Control-Allow-Origin', '*');
@@ -354,15 +373,9 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
 
   const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
   const ref  = data.r || '';
-  const body = upstream.data.split('\n').map(line => {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) return line;
-    let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
-    const tok = sign({ u: abs, r: ref, b: base });
-    return abs.includes('.m3u8')
-      ? `${SERVER_BASE}/hls/${tok}.m3u8`
-      : `${SERVER_BASE}/seg/${tok}.ts`;
-  }).join('\n');
+  const body = upstream.data.split('\n')
+    .map(line => rewriteManifestLine(line, manifestUrl, base, ref))
+    .join('\n');
 
   res.set('Content-Type', 'application/x-mpegURL');
   res.set('Cache-Control', 'no-cache');
