@@ -222,29 +222,48 @@ function originFromReferer(referer) {
   try { return new URL(referer).origin; } catch { return 'https://brightpathsignals.com'; }
 }
 
-// Rewrites a single manifest line so every URI it carries goes through our proxy:
-// - plain URI lines (variants/segments)
-// - #EXT-X-MEDIA tags with URI="..." (subtitle/audio tracks) — these were being
-//   left untouched, so the player fetched them straight from the CDN without the
-//   right Referer/Origin and failed ("pode existir um erro do addon" nas legendas).
-function proxifyUri(rawUri, manifestUrl, base, ref) {
+// Constrói o URL do proxy para uma URI. `asPlaylist` decide a rota:
+// - true  → /hls (sub-playlist m3u8: variante de vídeo, faixa de áudio/legenda)
+// - false → /seg (segmento de média: .ts, init segment, etc.)
+// NÃO usamos a extensão para decidir: o VixSrc serve playlists em formato de
+// query (…?type=video&rendition=480p) sem ".m3u8", por isso o contexto da
+// playlist (que tag precede a URI) é a única forma fiável de distinguir.
+function proxifyUri(rawUri, manifestUrl, base, ref, asPlaylist) {
   let abs; try { abs = new URL(rawUri, manifestUrl).href; } catch { abs = rawUri; }
   const tok = sign({ u: abs, r: ref, b: base });
-  return abs.includes('.m3u8')
+  return asPlaylist
     ? `${SERVER_BASE}/hls/${tok}.m3u8`
     : `${SERVER_BASE}/seg/${tok}.ts`;
 }
 
-function rewriteManifestLine(line, manifestUrl, base, ref) {
-  const t = line.trim();
-  if (!t) return line;
+// Reescreve um manifesto HLS inteiro, encaminhando cada URI pelo nosso proxy.
+// É sensível ao contexto: numa master playlist as URIs são sub-playlists (→/hls),
+// numa media playlist são segmentos (→/seg). A tag anterior desambigua.
+function rewriteManifest(body, manifestUrl, base, ref) {
+  const lines = body.split('\n');
+  let prevTag = '';
+  return lines.map(line => {
+    const t = line.trim();
+    if (!t) return line;
 
-  if (t.startsWith('#EXT-X-MEDIA') && /URI="([^"]+)"/.test(t)) {
-    return t.replace(/URI="([^"]+)"/, (_, uri) => `URI="${proxifyUri(uri, manifestUrl, base, ref)}"`);
-  }
-  if (t.startsWith('#')) return line;
+    // Tags #EXT-X-MEDIA (áudio/legendas) → sub-playlists → /hls
+    if (t.startsWith('#EXT-X-MEDIA') && /URI="([^"]+)"/.test(t)) {
+      prevTag = t;
+      return t.replace(/URI="([^"]+)"/, (_, uri) => `URI="${proxifyUri(uri, manifestUrl, base, ref, true)}"`);
+    }
+    // #EXT-X-MAP:URI="..." → init segment → /seg (bytes, não playlist)
+    if (t.startsWith('#EXT-X-MAP') && /URI="([^"]+)"/.test(t)) {
+      prevTag = t;
+      return t.replace(/URI="([^"]+)"/, (_, uri) => `URI="${proxifyUri(uri, manifestUrl, base, ref, false)}"`);
+    }
+    if (t.startsWith('#')) { prevTag = t; return line; }
 
-  return proxifyUri(t, manifestUrl, base, ref);
+    // Linha de URI: variante de vídeo (precedida de #EXT-X-STREAM-INF) → /hls;
+    // caso contrário é um segmento de média (após #EXTINF, etc.) → /seg.
+    const isVariant = prevTag.startsWith('#EXT-X-STREAM-INF') || prevTag.startsWith('#EXT-X-I-FRAME');
+    prevTag = '';
+    return proxifyUri(t, manifestUrl, base, ref, isVariant);
+  }).join('\n');
 }
 
 function fetchManifest(url, referer) {
@@ -349,9 +368,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     console.log('[proxy/hls] manifest servido do mfCache');
     const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
     const ref  = data.r || '';
-    const body = cachedBody.split('\n')
-      .map(line => rewriteManifestLine(line, manifestUrl, base, ref))
-      .join('\n');
+    const body = rewriteManifest(cachedBody, manifestUrl, base, ref);
     res.set('Content-Type', 'application/x-mpegURL');
     res.set('Cache-Control', 'no-cache');
     res.set('Access-Control-Allow-Origin', '*');
@@ -387,9 +404,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
 
   const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
   const ref  = data.r || '';
-  const body = upstream.data.split('\n')
-    .map(line => rewriteManifestLine(line, manifestUrl, base, ref))
-    .join('\n');
+  const body = rewriteManifest(upstream.data, manifestUrl, base, ref);
 
   res.set('Content-Type', 'application/x-mpegURL');
   res.set('Cache-Control', 'no-cache');
