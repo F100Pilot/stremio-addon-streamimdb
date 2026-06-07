@@ -1,5 +1,19 @@
 'use strict';
 require('dotenv').config();
+
+// O plugin puppeteer-extra-plugin-stealth tem um bug conhecido: quando uma
+// página fecha (timeout/circuit breaker) a meio da configuração das "evasions",
+// o seu handler interno (_onTargetCreated) rejeita uma promise que o Puppeteer
+// não aguarda — vira unhandledRejection e, desde o Node 15, derruba o processo.
+// Aqui só registamos e seguimos: um browser/página falhada já é tratada pelo
+// resolver (try/catch + circuit breaker); não vale a pena matar o servidor todo.
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandledRejection]', err && err.message ? err.message : err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && err.message ? err.message : err);
+});
+
 const express = require('express');
 const compression = require('compression');
 const axios   = require('axios');
