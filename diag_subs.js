@@ -39,6 +39,14 @@ async function main() {
   mediaLines.slice(0, 12).forEach((l, i) => console.log(`[${i}] ${l.trim()}`));
   console.log(`\nTotal de linhas #EXT-X-MEDIA: ${mediaLines.length}`);
 
+  console.log('\n=== Linhas com TYPE=AUDIO (DEFAULT/AUTOSELECT/GROUP-ID importam p/ troca de faixa) ===');
+  const audioLines = lines.filter(l => /TYPE=AUDIO/i.test(l));
+  console.log(`Total: ${audioLines.length}`);
+  audioLines.forEach((l, i) => console.log(`[${i}] ${l.trim()}`));
+
+  console.log('\n=== Linhas #EXT-X-STREAM-INF (referência aos grupos AUDIO/SUBTITLES) ===');
+  lines.filter(l => /#EXT-X-STREAM-INF/i.test(l)).slice(0, 6).forEach((l, i) => console.log(`[${i}] ${l.trim()}`));
+
   console.log('\n=== Linhas com TYPE=SUBTITLES ===');
   const subLines = lines.filter(l => /TYPE=SUBTITLES/i.test(l));
   console.log(`Total: ${subLines.length}`);
