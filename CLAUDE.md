@@ -130,6 +130,27 @@ Diagnóstico útil: `node diag_proxy.js [stremio-path]` segue a cadeia completa
 (master → variante → 1º segmento) através do domínio público e reporta o status
 de cada passo — isola se o problema está no proxy/CDN ou no player/cliente.
 
+### Faixa de áudio por defeito — forçar inglês (Stremio Android)
+A VixSrc é uma fonte **italiana**: marca o áudio italiano como `DEFAULT=YES`,
+`AUTOSELECT=YES` e o inglês como `DEFAULT=NO`. No PC e no Nuvio dava para trocar,
+mas o **Stremio Android (ExoPlayer)** arrancava em italiano e a troca manual para
+inglês "não fazia nada".
+
+`rewriteManifest` corrige isto em dois passos (ambos necessários — o `DEFAULT`
+sozinho não chegou para o Stremio Android):
+1. **Marca o inglês como `DEFAULT=YES`/`AUTOSELECT=YES`** e as outras faixas do
+   mesmo `GROUP-ID` como `DEFAULT=NO` (`audioIsEnglish` + `setFlag`). Só toca em
+   grupos que **têm** faixa inglesa (pré-passagem `groupsWithEn`) — grupos sem
+   inglês mantêm o default original (não ficam sem default nenhum).
+2. **Reordena as `#EXT-X-MEDIA:TYPE=AUDIO` para o inglês ficar listado em 1º.**
+   O Stremio Android ignora o `DEFAULT` e escolhe a **primeira** faixa listada —
+   foi este passo que resolveu. Sort estável (V8) mantém a ordem relativa das
+   restantes faixas.
+
+Diagnóstico: `node diag_subs.js [tmdbId] [s] [e]` despeja as faixas `TYPE=AUDIO`/
+`TYPE=SUBTITLES` e o `#EXT-X-STREAM-INF` do master; comparar com o que o nosso
+proxy serve (curl ao `/hls/...`) confirma se a reescrita aplicou bem.
+
 ## Legendas (subtitles)
 - Manifesto declara `resources: ['stream', 'subtitles']`; `addon.js` define
   `defineSubtitlesHandler` que chama `fetchSubtitles` (em `scraper.js`, reaproveita
