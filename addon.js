@@ -66,10 +66,19 @@ builder.defineStreamHandler(async (args) => {
         const streamUrl = s.proxyable === false
           ? s.url
           : makeHlsProxyUrl(s.url, s.referer || referer);
+
+        // Indica disponibilidade de legendas PT/EN (idiomas que mais interessam).
+        const langs = (s.subtitles || []).map(t => (t.lang || '').toLowerCase());
+        const subFlags = [];
+        if (langs.some(l => l.startsWith('pt'))) subFlags.push('PT');
+        if (langs.some(l => l.startsWith('en'))) subFlags.push('EN');
+        const subInfo = subFlags.length ? ` · 🔤 ${subFlags.join('/')}` : '';
+
+        const titlePrefix = type === 'series' ? `S${season}E${episode} · ` : '';
         return {
           url:   streamUrl,
           name:  'StreamIMDb',
-          title: type === 'series' ? `S${season}E${episode} · ${s.quality}` : s.quality,
+          title: `${titlePrefix}${s.quality}${subInfo}`,
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         };
       });

@@ -70,29 +70,47 @@ function extractSubsFromHtml(html, baseUrl) {
   return out;
 }
 
-// Busca o master m3u8 e extrai faixas #EXT-X-MEDIA:TYPE=SUBTITLES → [{url, lang}].
-async function subsFromMaster(masterUrl, referer) {
+// Detecta a qualidade máxima do master a partir de RESOLUTION=WxH
+// (#EXT-X-STREAM-INF). Devolve um rótulo tipo "1080p"/"4K", ou null se
+// o master não tiver variantes com RESOLUTION (ex.: playlist única).
+const RES_THRESHOLDS = [[2160, '4K'], [1440, '1440p'], [1080, '1080p'], [720, '720p'], [480, '480p']];
+function detectQuality(m3u8) {
+  let maxH = 0;
+  for (const line of m3u8.split('\n')) {
+    const m = line.match(/RESOLUTION=\d+x(\d+)/i);
+    if (m) maxH = Math.max(maxH, parseInt(m[1], 10));
+  }
+  if (!maxH) return null;
+  for (const [min, label] of RES_THRESHOLDS) if (maxH >= min) return label;
+  return `${maxH}p`;
+}
+
+// Busca o master m3u8 uma única vez → qualidade (RESOLUTION) + faixas
+// #EXT-X-MEDIA:TYPE=SUBTITLES → { quality, subtitles: [{url, lang}] }.
+async function masterInfo(masterUrl, referer) {
   try {
     const res = await axios.get(masterUrl, {
       headers: { 'User-Agent': UA, ...(referer ? { Referer: referer } : {}) },
       timeout: TIMEOUT, responseType: 'text', maxRedirects: 5, validateStatus: s => s < 500,
     });
     const body = typeof res.data === 'string' ? res.data : '';
-    if (!body.includes('#EXT-X-MEDIA')) return [];
-    const out = [];
-    for (const line of body.split('\n')) {
-      const t = line.trim();
-      if (!/^#EXT-X-MEDIA:.*TYPE=SUBTITLES/i.test(t)) continue;
-      const uri = t.match(/URI="([^"]+)"/)?.[1];
-      if (!uri) continue;
-      const name = t.match(/NAME="([^"]+)"/i)?.[1];
-      const langAttr = t.match(/LANGUAGE="([^"]+)"/i)?.[1];
-      let abs; try { abs = new URL(uri, masterUrl).href; } catch { abs = uri; }
-      out.push({ url: abs, lang: normalizeLang(langAttr || name), name: name || null });
+    const quality = detectQuality(body);
+    const subtitles = [];
+    if (body.includes('#EXT-X-MEDIA')) {
+      for (const line of body.split('\n')) {
+        const t = line.trim();
+        if (!/^#EXT-X-MEDIA:.*TYPE=SUBTITLES/i.test(t)) continue;
+        const uri = t.match(/URI="([^"]+)"/)?.[1];
+        if (!uri) continue;
+        const name = t.match(/NAME="([^"]+)"/i)?.[1];
+        const langAttr = t.match(/LANGUAGE="([^"]+)"/i)?.[1];
+        let abs; try { abs = new URL(uri, masterUrl).href; } catch { abs = uri; }
+        subtitles.push({ url: abs, lang: normalizeLang(langAttr || name), name: name || null });
+      }
+      if (subtitles.length) console.log(`[dc:vixsrc] ${subtitles.length} legenda(s) no master m3u8`);
     }
-    if (out.length) console.log(`[dc:vixsrc] ${out.length} legenda(s) no master m3u8`);
-    return out;
-  } catch (e) { console.log('[dc:vixsrc] subsFromMaster erro:', e.message); return []; }
+    return { quality, subtitles };
+  } catch (e) { console.log('[dc:vixsrc] masterInfo erro:', e.message); return { quality: null, subtitles: [] }; }
 }
 
 // ── VixSrc ─────────────────────────────────────────────────────────────────
@@ -138,9 +156,12 @@ async function tryVixsrc(tmdbId, type, season, episode) {
     const masterUrl = `${playlist}${sep}token=${token}&expires=${expires}&h=1`;
     console.log(`[dc:vixsrc] ✓ master: ${masterUrl.substring(0, 70)}...`);
 
+    // Master: uma só busca → qualidade (RESOLUTION) + legendas de fallback.
+    const info = await masterInfo(masterUrl, VIX_BASE + '/');
+
     // Legendas: tenta o HTML embed e, se nada, o master m3u8 (#EXT-X-MEDIA).
     let subtitles = extractSubsFromHtml(html, VIX_BASE);
-    if (!subtitles.length) subtitles = await subsFromMaster(masterUrl, VIX_BASE + '/');
+    if (!subtitles.length) subtitles = info.subtitles;
     subtitles = subtitles.map(s => ({ ...s, referer: VIX_BASE + '/' }));
     if (!subtitles.length) console.log('[dc:vixsrc] sem legendas (nem embed nem master) — fonte pode não ter');
 
@@ -150,7 +171,7 @@ async function tryVixsrc(tmdbId, type, season, episode) {
     // que o nosso servidor busque a CDN e sirva o cliente via /hls.
     // (Nota: se isto for usado num deploy datacenter — ex. Vercel — o inverso
     // é que se aplica: aí proxyable:false é a escolha certa.)
-    return [{ url: masterUrl, quality: 'Auto', proxyable: true, referer: apiUrl, subtitles }];
+    return [{ url: masterUrl, quality: info.quality || 'Auto', proxyable: true, referer: apiUrl, subtitles }];
   } catch (e) {
     console.log(`[dc:vixsrc] erro: ${e.message}`);
     return null;
@@ -182,9 +203,20 @@ async function tryVidlink(tmdbId, type, season, episode) {
     if (!playlist) { console.log('[dc:vidlink] sem playlist'); return null; }
 
     console.log(`[dc:vidlink] ✓ playlist: ${playlist.substring(0, 70)}...`);
+
+    // Detecta a qualidade máxima (RESOLUTION) do master, se possível.
+    let quality = 'Auto';
+    try {
+      const m = await axios.get(playlist, {
+        headers: { 'User-Agent': UA, Referer: VIDLINK_REF },
+        timeout: 8000, responseType: 'text', validateStatus: s => s < 500,
+      });
+      quality = detectQuality(typeof m.data === 'string' ? m.data : '') || 'Auto';
+    } catch (_) { /* mantém 'Auto' */ }
+
     // proxyable:true — ver nota em tryVixsrc: na branch Server o nosso proxy
     // tem o IP residencial bom, por isso serve melhor de intermediário.
-    return [{ url: playlist, quality: 'Auto', proxyable: true, referer: VIDLINK_REF + '/' }];
+    return [{ url: playlist, quality, proxyable: true, referer: VIDLINK_REF + '/' }];
   } catch (e) {
     console.log(`[dc:vidlink] erro: ${e.message}`);
     return null;
