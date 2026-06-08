@@ -115,11 +115,14 @@ builder.defineSubtitlesHandler(async (args) => {
 
     const seen = new Set();
     const subtitles = subs.map((s, i) => {
-      const label = s.name || s.lang || 'und';   // texto mostrado no Stremio
-      let id = `${s.lang || 'und'}-${i}`;
+      // 'lang' tem de ser um código de idioma válido (ISO 639-1/2) — o Stremio
+      // usa-o para mostrar a bandeira/nome. Usar texto livre (ex.: o NAME="3-eng"
+      // bruto do m3u8) faz o Stremio rejeitar a faixa ("erro no track"/"no tracks").
+      const lang = s.lang || 'und';
+      let id = `${lang}-${i}`;
       while (seen.has(id)) id = `${id}_`;
       seen.add(id);
-      return { id, lang: label, url: makeSubProxyUrl(s.url, s.referer || referer) };
+      return { id, lang, url: makeSubProxyUrl(s.url, s.referer || referer) };
     });
     console.log(`[handler] ${subtitles.length} legenda(s) para ${args.id}`);
     return { subtitles };
