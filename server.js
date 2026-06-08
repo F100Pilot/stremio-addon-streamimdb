@@ -266,7 +266,7 @@ function rewriteManifest(body, manifestUrl, base, ref) {
   }
   const enDefaultDone = new Set(); // GROUP-IDs onde já marcámos o inglês default
 
-  return lines.map(line => {
+  const mapped = lines.map(line => {
     const t = line.trim();
     if (!t) return line;
 
@@ -307,7 +307,23 @@ function rewriteManifest(body, manifestUrl, base, ref) {
     const isVariant = prevTag.startsWith('#EXT-X-STREAM-INF') || prevTag.startsWith('#EXT-X-I-FRAME');
     prevTag = '';
     return proxifyUri(t, manifestUrl, base, ref, isVariant);
-  }).join('\n');
+  });
+
+  // Reordenar as faixas de áudio: inglês primeiro. Alguns players (Stremio
+  // Android/ExoPlayer) ignoram o DEFAULT=YES e escolhem a primeira faixa
+  // listada. Mantém-se a ordem relativa das restantes (sort estável no V8).
+  const audioIdx = [];
+  for (let i = 0; i < mapped.length; i++) {
+    if (/^#EXT-X-MEDIA:.*TYPE=AUDIO/i.test(mapped[i].trim())) audioIdx.push(i);
+  }
+  if (audioIdx.length > 1) {
+    const audioLines = audioIdx.map(i => mapped[i]);
+    audioLines.sort((a, b) =>
+      audioIsEnglish(a) === audioIsEnglish(b) ? 0 : (audioIsEnglish(a) ? -1 : 1));
+    audioIdx.forEach((idx, k) => { mapped[idx] = audioLines[k]; });
+  }
+
+  return mapped.join('\n');
 }
 
 function fetchManifest(url, referer) {
