@@ -242,6 +242,15 @@ function audioIsEnglish(line) {
   const name = (line.match(/NAME="([^"]+)"/i) || [])[1] || '';
   return /^en/i.test(lang) || /english|ingl[eê]s/i.test(name);
 }
+// Prioridade de uma faixa #EXT-X-MEDIA:TYPE=SUBTITLES — quanto menor, mais cedo
+// fica listada (PT primeiro, depois EN, depois as restantes pela ordem original).
+function subtitlePriority(line) {
+  const lang = (line.match(/LANGUAGE="([^"]+)"/i) || [])[1] || '';
+  const name = (line.match(/NAME="([^"]+)"/i) || [])[1] || '';
+  if (/^por/i.test(lang) || /portugu[eê]s/i.test(name)) return 0;
+  if (/^en/i.test(lang) || /english|ingl[eê]s/i.test(name)) return 1;
+  return 2;
+}
 // Define (ou substitui) um atributo sem aspas (DEFAULT=YES/NO) numa linha m3u8.
 function setFlag(line, key, value) {
   const re = new RegExp(`${key}=(?:"[^"]*"|[^,]*)`, 'i');
@@ -321,6 +330,19 @@ function rewriteManifest(body, manifestUrl, base, ref) {
     audioLines.sort((a, b) =>
       audioIsEnglish(a) === audioIsEnglish(b) ? 0 : (audioIsEnglish(a) ? -1 : 1));
     audioIdx.forEach((idx, k) => { mapped[idx] = audioLines[k]; });
+  }
+
+  // Reordenar as faixas de legendas embutidas: PT primeiro, depois EN, depois
+  // as restantes — mesmo raciocínio do áudio (o Stremio Android escolhe/baralha
+  // pela ordem de listagem e ignora a selecção manual do utilizador).
+  const subIdx = [];
+  for (let i = 0; i < mapped.length; i++) {
+    if (/^#EXT-X-MEDIA:.*TYPE=SUBTITLES/i.test(mapped[i].trim())) subIdx.push(i);
+  }
+  if (subIdx.length > 1) {
+    const subLines = subIdx.map(i => mapped[i]);
+    subLines.sort((a, b) => subtitlePriority(a) - subtitlePriority(b));
+    subIdx.forEach((idx, k) => { mapped[idx] = subLines[k]; });
   }
 
   return mapped.join('\n');
