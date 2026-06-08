@@ -512,6 +512,22 @@ function srtToVtt(srt) {
   return 'WEBVTT\n\n' + body.trim() + '\n';
 }
 
+// Normaliza os timestamps das cues para a forma completa HH:MM:SS.mmm.
+// Algumas fontes (VixSrc) servem VTT com timestamps curtos MM:SS.mmm
+// (ex.: "00:01.168 --> 00:03.712"). Parsers estritos — incluindo o do Stremio —
+// rejeitam a faixa inteira sem a componente das horas → "erro ao carregar
+// legendas". Só toca em linhas de cue (que contêm "-->").
+function normalizeVttTimestamps(vtt) {
+  return vtt.split('\n').map(line => {
+    if (!line.includes('-->')) return line;
+    return line.replace(/(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})/g, ts => {
+      let t = ts.replace(',', '.');
+      if (((t.match(/:/g) || []).length) === 1) t = '00:' + t; // MM:SS.mmm → 00:MM:SS.mmm
+      return t;
+    });
+  }).join('\n');
+}
+
 // Proxy de legendas (.vtt/.srt): busca com Referer, converte SRT→VTT, devolve VTT.
 app.all('/sub/:encoded.vtt', async (req, res) => {
   if (req.method === 'HEAD' || req.method === 'OPTIONS') {
@@ -565,6 +581,7 @@ app.all('/sub/:encoded.vtt', async (req, res) => {
 
     const isVtt = /^﻿?WEBVTT/.test(txt) || /\.vtt(\?|$)/i.test(srcUrl);
     if (!isVtt) txt = srtToVtt(txt);
+    txt = normalizeVttTimestamps(txt); // garante HH:MM:SS.mmm (Stremio é estrito)
 
     res.set('Content-Type', 'text/vtt; charset=utf-8');
     res.set('Cache-Control', 'public, max-age=3600');
