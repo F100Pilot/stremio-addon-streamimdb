@@ -236,12 +236,36 @@ function proxifyUri(rawUri, manifestUrl, base, ref, asPlaylist) {
     : `${SERVER_BASE}/seg/${tok}.ts`;
 }
 
+// Decide se uma faixa de áudio #EXT-X-MEDIA é inglesa (por LANGUAGE ou NAME).
+function audioIsEnglish(line) {
+  const lang = (line.match(/LANGUAGE="([^"]+)"/i) || [])[1] || '';
+  const name = (line.match(/NAME="([^"]+)"/i) || [])[1] || '';
+  return /^en/i.test(lang) || /english|ingl[eê]s/i.test(name);
+}
+// Define (ou substitui) um atributo sem aspas (DEFAULT=YES/NO) numa linha m3u8.
+function setFlag(line, key, value) {
+  const re = new RegExp(`${key}=(?:"[^"]*"|[^,]*)`, 'i');
+  return re.test(line) ? line.replace(re, `${key}=${value}`) : `${line},${key}=${value}`;
+}
+
 // Reescreve um manifesto HLS inteiro, encaminhando cada URI pelo nosso proxy.
 // É sensível ao contexto: numa master playlist as URIs são sub-playlists (→/hls),
 // numa media playlist são segmentos (→/seg). A tag anterior desambigua.
 function rewriteManifest(body, manifestUrl, base, ref) {
   const lines = body.split('\n');
   let prevTag = '';
+
+  // Pré-passagem: que GROUP-IDs de áudio têm faixa inglesa? Só nesses é que
+  // forçamos o inglês como DEFAULT — grupos sem inglês mantêm o seu default
+  // original (não queremos deixar um grupo sem default nenhum).
+  const groupsWithEn = new Set();
+  for (const l of lines) {
+    if (/#EXT-X-MEDIA/i.test(l) && /TYPE=AUDIO/i.test(l) && audioIsEnglish(l)) {
+      groupsWithEn.add((l.match(/GROUP-ID="([^"]+)"/i) || [])[1] || '');
+    }
+  }
+  const enDefaultDone = new Set(); // GROUP-IDs onde já marcámos o inglês default
+
   return lines.map(line => {
     const t = line.trim();
     if (!t) return line;
@@ -249,7 +273,20 @@ function rewriteManifest(body, manifestUrl, base, ref) {
     // Tags #EXT-X-MEDIA (áudio/legendas) → sub-playlists → /hls
     if (t.startsWith('#EXT-X-MEDIA') && /URI="([^"]+)"/.test(t)) {
       prevTag = t;
-      return t.replace(/URI="([^"]+)"/, (_, uri) => `URI="${proxifyUri(uri, manifestUrl, base, ref, true)}"`);
+      let out = t.replace(/URI="([^"]+)"/, (_, uri) => `URI="${proxifyUri(uri, manifestUrl, base, ref, true)}"`);
+      // Forçar inglês como áudio por defeito (preferência do utilizador no Android).
+      if (/TYPE=AUDIO/i.test(t)) {
+        const group = (t.match(/GROUP-ID="([^"]+)"/i) || [])[1] || '';
+        if (groupsWithEn.has(group)) {
+          if (audioIsEnglish(t) && !enDefaultDone.has(group)) {
+            out = setFlag(setFlag(out, 'DEFAULT', 'YES'), 'AUTOSELECT', 'YES');
+            enDefaultDone.add(group);
+          } else {
+            out = setFlag(out, 'DEFAULT', 'NO');
+          }
+        }
+      }
+      return out;
     }
     // #EXT-X-MAP:URI="..." → init segment → /seg (bytes, não playlist)
     if (t.startsWith('#EXT-X-MAP') && /URI="([^"]+)"/.test(t)) {
