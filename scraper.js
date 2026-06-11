@@ -2,7 +2,6 @@
 const { fetchFromProviders } = require('./providers');
 const { fetchFromAltSources } = require('./alt_scraper');
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
-const { resolvePuppeteer, circuitState } = require('./puppeteer_resolver');
 
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000;
 const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 8;
@@ -77,14 +76,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       if (streams) { console.log('[scraper] alt_scraper OK'); setCached(key, streams); return streams; }
     } catch (e) { console.log('[scraper] alt_scraper falhou:', e.message); }
 
-    // 3. Puppeteer (passa o Turnstile via headful + Xvfb)
-    console.log('[scraper] A tentar resolver via browser (Puppeteer)...');
-    try {
-      const streams = await resolvePuppeteer(imdbId, type, season, episode);
-      if (streams) { console.log('[scraper] Puppeteer OK'); setCached(key, streams); return streams; }
-    } catch (e) { console.log('[scraper] Puppeteer falhou:', e.message); }
-
-    // 4. movie-web providers (último recurso, lento)
+    // 3. movie-web providers (último recurso, lento)
     console.log('[scraper] A tentar movie-web providers...');
     try {
       const streams = await fetchFromProviders(imdbId, type, season, episode);
@@ -134,7 +126,6 @@ function getStatus() {
     activeScrapes,
     maxQueue: MAX_QUEUE,
     cache: { size: cache.size, ttlSeconds: Math.floor(CACHE_TTL / 1000), entries },
-    puppeteerCircuit: circuitState(),
   };
 }
 

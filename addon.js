@@ -57,9 +57,8 @@ builder.defineStreamHandler(async (args) => {
     } catch (scraperErr) {
       console.error(`[handler] Erro no scraper: ${scraperErr.message}`);
     }
-    // Sem retry cego aqui: re-executaria toda a cadeia (incl. Puppeteer/Cloudflare)
-    // e amplificava a carga. A dedup/cache do scraper e o circuit breaker tratam
-    // dos casos transitórios.
+    // Sem retry cego aqui: re-executaria toda a cadeia e amplificava a carga.
+    // A dedup/cache do scraper trata dos casos transitórios.
 
     if (result && result.type === 'direct') {
       const streams = result.streams.map(s => {
