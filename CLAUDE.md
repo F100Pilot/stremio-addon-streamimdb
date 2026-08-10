@@ -1,4 +1,4 @@
-# StreamIMDb Connector v1.4.1
+# StreamIMDb Connector v1.4.2
 
 ## Comandos
 ```
