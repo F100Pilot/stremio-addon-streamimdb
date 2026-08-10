@@ -236,13 +236,23 @@ async function fetchFromDatacenterSources(imdbId, type, season, episode) {
   const tmdbId = tmdb.id;
   console.log(`[dc] IMDb ${imdbId} → TMDB ${tmdbId}`);
 
-  const vix = await tryVixsrc(tmdbId, type, season, episode);
-  if (vix && vix.length) return vix;
+  // Tenta TODAS as fontes e devolve todas as que resolverem, em vez de parar
+  // na primeira. Nem todas têm as mesmas faixas de áudio — a VixSrc é italiana
+  // e há títulos em que só traz italiano/alemão. Dando as duas opções ao
+  // Stremio, o utilizador escolhe a que tem a língua que quer.
+  const [vix, vid] = await Promise.all([
+    tryVixsrc(tmdbId, type, season, episode).catch(e => { console.log('[dc:vixsrc] erro:', e.message); return null; }),
+    tryVidlink(tmdbId, type, season, episode).catch(e => { console.log('[dc:vidlink] erro:', e.message); return null; }),
+  ]);
 
-  const vid = await tryVidlink(tmdbId, type, season, episode);
-  if (vid && vid.length) return vid;
+  const streams = [
+    ...(vix || []).map(s => ({ ...s, source: 'VixSrc' })),
+    ...(vid || []).map(s => ({ ...s, source: 'Vidlink' })),
+  ];
 
-  return null;
+  if (!streams.length) return null;
+  console.log(`[dc] ${streams.length} stream(s): ${streams.map(s => s.source).join(', ')}`);
+  return streams;
 }
 
 module.exports = { fetchFromDatacenterSources };

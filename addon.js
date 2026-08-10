@@ -74,10 +74,14 @@ builder.defineStreamHandler(async (args) => {
         const subInfo = subFlags.length ? ` · 🔤 ${subFlags.join('/')}` : '';
 
         const titlePrefix = type === 'series' ? `S${season}E${episode} · ` : '';
+        // A fonte vai no título porque cada uma traz faixas de áudio
+        // diferentes (a VixSrc é italiana e há títulos sem inglês) — assim
+        // dá para escolher a certa na lista do Stremio.
+        const srcInfo = s.source ? ` · ${s.source}` : '';
         return {
           url:   streamUrl,
           name:  'StreamIMDb',
-          title: `${titlePrefix}${s.quality}${subInfo}`,
+          title: `${titlePrefix}${s.quality}${srcInfo}${subInfo}`,
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         };
       });
