@@ -267,6 +267,7 @@ app.get('/diag/sources', async (req, res) => {
 // um podia usar o deploy para sondar hosts internos.
 const DIAG_ALLOWED_HOSTS = [
   'embed.smashystream.com', 'smashystream.com', 'player.smashy.stream',
+  'anyembed.xyz', 'www.anyembed.xyz', // smashystream redirecciona para aqui
   'www.2embed.cc', '2embed.cc', 'www.2embed.skin', '2embed.skin',
   'vidlink.pro', 'vixsrc.to', 'vidsrc.net', 'vidsrc.cc',
   'streamimdb.me', 'multiembed.mov', 'www.nontongo.win',
@@ -297,6 +298,25 @@ app.get('/diag/inspect', async (req, res) => {
       while ((m = re.exec(html))) out.push(m[group]);
       return uniq(out);
     };
+
+    // ?grep=<regex> — procura livre no corpo (útil em bundles JS minificados,
+    // onde os endpoints não seguem nenhum dos padrões fixos abaixo). Devolve
+    // cada match com contexto à volta.
+    if (req.query.grep) {
+      let re;
+      try { re = new RegExp(req.query.grep, 'gi'); }
+      catch (e) { return res.status(400).json({ error: `regex inválida: ${e.message}` }); }
+      const pad = Math.min(parseInt(req.query.pad, 10) || 120, 600);
+      const hits = []; let m;
+      while ((m = re.exec(html)) && hits.length < 60) {
+        hits.push(html.substring(Math.max(0, m.index - pad), m.index + m[0].length + pad));
+        if (m.index === re.lastIndex) re.lastIndex++; // evita loop em match vazio
+      }
+      return res.json({
+        finalUrl: r.request?.res?.responseUrl || target,
+        status: r.status, bytes: html.length, grep: req.query.grep, hits,
+      });
+    }
 
     res.json({
       finalUrl: r.request?.res?.responseUrl || target,
