@@ -96,10 +96,35 @@ function findM3u8(body) {
       return;
     }
 
+    // O player do cloudorchestranova guarda a configuração num window.CFG —
+    // é lá que estão os endpoints (metaApi, sourceApi, ...) que devolvem o
+    // stream. Vale a pena segui-los antes de desistir.
+    const cfgRaw = body.match(/window\.CFG\s*=\s*(\{[\s\S]*?\})\s*[;<]/);
+    if (cfgRaw) {
+      let cfg = null;
+      try { cfg = JSON.parse(cfgRaw[1]); } catch (e) { console.log(`    CFG não parseável: ${e.message}`); }
+      if (cfg) {
+        console.log('    window.CFG:');
+        console.log(JSON.stringify(cfg, null, 2).replace(/^/gm, '      '));
+
+        for (const [k, v] of Object.entries(cfg)) {
+          if (typeof v !== 'string' || !/^https?:\/\//.test(v)) continue;
+          console.log(`\n    → ${k}: ${v}`);
+          const r = await get(v, url);
+          const b = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+          console.log(`      HTTP ${r.status} · ${b.length}b`);
+          const m = findM3u8(b);
+          if (m) { console.log(`      ★ m3u8: ${m}`); }
+          else { console.log(b.substring(0, 700).replace(/^/gm, '        ')); }
+        }
+        return;
+      }
+    }
+
     const next = findNext(body, url, visited);
     if (!next) {
       console.log('    sem próximo passo. Amostra:');
-      console.log(body.substring(0, 800).replace(/^/gm, '      '));
+      console.log(body.substring(0, 1500).replace(/^/gm, '      '));
       return;
     }
     referer = url;
