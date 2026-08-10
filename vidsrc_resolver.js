@@ -31,6 +31,9 @@ const MAX_CONCURRENT = parseInt(process.env.VIDSRC_CONCURRENCY)    || 2;
 const IDLE_CLOSE_MS  = parseInt(process.env.VIDSRC_IDLE_CLOSE_MS)  || 5 * 60 * 1000;
 // Sem Turnstile para resolver, o headless normal chega e gasta menos.
 const HEADLESS = process.env.VIDSRC_HEADLESS === 'false' ? false : 'new';
+// VIDSRC_DEBUG=1 despeja pedidos de rede, frames e erros da página — é assim
+// que se percebe em que ponto da cadeia o player encravou.
+const DEBUG = process.env.VIDSRC_DEBUG === '1';
 
 // Hosts de anúncios/tracking: bloqueados para a página carregar mais depressa
 // e não abrir popunders.
@@ -113,6 +116,7 @@ async function resolveVidsrc(imdbId, type, season, episode) {
     await page.setRequestInterception(true);
     page.on('request', req => {
       const url = req.url();
+      if (DEBUG) console.log(`[vidsrc:req] ${req.resourceType().padEnd(10)} ${url.substring(0, 130)}`);
       if (AD_RE.test(url)) return req.abort().catch(() => {});
       if (/\.m3u8(\?|$)/i.test(url)) {
         done({ url, referer: req.frame()?.url() || page.url() });
@@ -125,24 +129,42 @@ async function resolveVidsrc(imdbId, type, season, episode) {
       const url = res.url();
       if (/\.m3u8(\?|$)/i.test(url)) done({ url, referer: page.url() });
     });
+    if (DEBUG) {
+      page.on('console', m => console.log(`[vidsrc:console] ${m.text().substring(0, 200)}`));
+      page.on('pageerror', e => console.log(`[vidsrc:pageerror] ${e.message.substring(0, 200)}`));
+      page.on('frameattached', f => console.log(`[vidsrc:frame+] ${f.url().substring(0, 130)}`));
+      page.on('framenavigated', f => console.log(`[vidsrc:frame→] ${f.url().substring(0, 130)}`));
+    }
 
     const target = embedUrl(imdbId, type, season, episode);
     console.log(`[vidsrc] a resolver ${target}`);
     page.goto(target, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
 
-    // O player costuma precisar de um clique para arrancar (#bigPlay).
-    setTimeout(async () => {
+    // O player precisa de um clique para arrancar (#bigPlay), mas as frames
+    // aninhadas só existem depois de o JS as montar — daí insistir várias
+    // vezes em vez de um clique único a um tempo fixo.
+    const clicker = setInterval(async () => {
       for (const frame of page.frames()) {
-        try { await frame.click('#bigPlay, .jw-bigplay, #player', { delay: 30 }); } catch { /* não existe nesta frame */ }
+        for (const sel of ['#bigPlay', '.jw-bigplay', '#player', 'video', 'body']) {
+          try { await frame.click(sel, { delay: 20 }); } catch { /* selector ausente nesta frame */ }
+        }
       }
-    }, 3000);
+    }, 2500);
 
     const hit = await Promise.race([
       m3u8,
       new Promise(res => setTimeout(() => res(null), NAV_TIMEOUT)),
     ]);
+    clearInterval(clicker);
 
-    if (!hit) { console.log('[vidsrc] ✗ nenhum m3u8 capturado'); return null; }
+    if (!hit) {
+      console.log('[vidsrc] ✗ nenhum m3u8 capturado');
+      if (DEBUG) {
+        console.log('[vidsrc:debug] frames no fim:');
+        for (const f of page.frames()) console.log(`    ${f.url().substring(0, 140)}`);
+      }
+      return null;
+    }
     console.log(`[vidsrc] ✓ m3u8: ${hit.url.substring(0, 90)}...`);
     return [{
       url: hit.url,
