@@ -222,6 +222,15 @@ app.get('/diag/sources', async (req, res) => {
     { name: 'embed.su',     url: `https://embed.su/embed/movie/${tmdb}`,       ref: 'https://embed.su',    hint: d => typeof d === 'string' && d.length > 500 },
     { name: '2embed.cc',    url: `https://www.2embed.cc/embed/${tmdb}`,        ref: 'https://www.2embed.cc',hint: d => typeof d === 'string' && d.length > 500 },
     { name: 'multiembed',   url: `https://multiembed.mov/?video_id=${tmdb}&tmdb=1`, ref: 'https://multiembed.mov', hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'vidsrc.pro',   url: `https://vidsrc.pro/embed/movie/${tmdb}`,    ref: 'https://vidsrc.pro',  hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'vidsrc.net',   url: `https://vidsrc.net/embed/movie/${tmdb}`,    ref: 'https://vidsrc.net',  hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'vidsrc.icu',   url: `https://vidsrc.icu/embed/movie/${tmdb}`,    ref: 'https://vidsrc.icu',  hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'moviesapi.club', url: `https://moviesapi.club/movie/${tmdb}`,    ref: 'https://moviesapi.club', hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'autoembed.cc', url: `https://player.autoembed.cc/embed/movie/${tmdb}`, ref: 'https://autoembed.cc', hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'smashystream', url: `https://embed.smashystream.com/playere.php?tmdb=${tmdb}`, ref: 'https://smashystream.com', hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'nontongo',     url: `https://www.nontongo.win/embed/movie/${tmdb}`, ref: 'https://www.nontongo.win', hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'vidbinge',     url: `https://vidbinge.dev/embed/movie/${tmdb}`,   ref: 'https://vidbinge.dev', hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'warezcdn',     url: `https://embed.warezcdn.link/filme/${tmdb}`,  ref: 'https://warezcdn.com', hint: d => typeof d === 'string' && d.length > 500 },
   ];
   const results = await Promise.all(probes.map(async p => {
     const t0 = Date.now();
