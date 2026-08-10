@@ -269,7 +269,8 @@ const DIAG_ALLOWED_HOSTS = [
   'embed.smashystream.com', 'smashystream.com', 'player.smashy.stream',
   'anyembed.xyz', 'www.anyembed.xyz', // smashystream redirecciona para aqui
   // Fontes que o bundle do anyembed usa por baixo (candidatas a integrar):
-  'primewire.mov', 'streams.icefy.top', 'themoviedb.hexa.su', 'cloudnestra.com',
+  'primewire.mov', 'primesrc.me', 'streams.icefy.top', 'themoviedb.hexa.su',
+  'cloudnestra.com', 'panel.watchkaroabhi.com',
   'www.2embed.cc', '2embed.cc', 'www.2embed.skin', '2embed.skin',
   'vidlink.pro', 'vixsrc.to', 'vidsrc.net', 'vidsrc.cc',
   'streamimdb.me', 'multiembed.mov', 'www.nontongo.win',
@@ -287,9 +288,18 @@ app.get('/diag/inspect', async (req, res) => {
   }
 
   const ref = req.query.ref || `${u.protocol}//${u.hostname}`;
+  // ?hdr=Nome:valor|Nome2:valor2 — algumas APIs (ex.: as de apps Android)
+  // só respondem com headers próprios tipo X-Package-Name.
+  const extraHeaders = {};
+  if (req.query.hdr) {
+    for (const pair of String(req.query.hdr).split('|')) {
+      const i = pair.indexOf(':');
+      if (i > 0) extraHeaders[pair.slice(0, i).trim()] = pair.slice(i + 1).trim();
+    }
+  }
   try {
     const r = await axios.get(target, {
-      headers: { 'User-Agent': DIAG_UA, 'Accept': 'text/html,*/*', Referer: ref, Origin: ref },
+      headers: { 'User-Agent': DIAG_UA, 'Accept': 'text/html,*/*', Referer: ref, Origin: ref, ...extraHeaders },
       timeout: 12000, maxRedirects: 5, validateStatus: () => true, httpAgent, httpsAgent,
       responseType: 'text', transformResponse: x => x,
     });
