@@ -268,6 +268,8 @@ app.get('/diag/sources', async (req, res) => {
 const DIAG_ALLOWED_HOSTS = [
   'embed.smashystream.com', 'smashystream.com', 'player.smashy.stream',
   'anyembed.xyz', 'www.anyembed.xyz', // smashystream redirecciona para aqui
+  // Fontes que o bundle do anyembed usa por baixo (candidatas a integrar):
+  'primewire.mov', 'streams.icefy.top', 'themoviedb.hexa.su', 'cloudnestra.com',
   'www.2embed.cc', '2embed.cc', 'www.2embed.skin', '2embed.skin',
   'vidlink.pro', 'vixsrc.to', 'vidsrc.net', 'vidsrc.cc',
   'streamimdb.me', 'multiembed.mov', 'www.nontongo.win',
