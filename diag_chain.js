@@ -58,6 +58,27 @@ function findNext(body, base, visited) {
   return cands[0] || null;
 }
 
+// Mostra pistas de onde está a fonte, em vez de despejar JS minificado.
+function hints(body) {
+  const patterns = [
+    ['config/CFG',   /(?:window\.)?(?:CFG|config|PLAYER_CONFIG)\s*=\s*\{[^\n]{0,300}/gi],
+    ['endpoints',    /["'](?:https?:\/\/[^"']+|\/)[^"']*(?:api|source|stream|play|get)[^"']*\.(?:php|json)[^"']*["']/gi],
+    ['fetch/ajax',   /(?:fetch|\.get|\.post|open)\(\s*["'`][^"'`]{4,160}["'`]/gi],
+    ['file/sources', /(?:file|sources|src|url)\s*:\s*["'][^"']{8,200}["']/gi],
+    ['media',        /https?:\/\/[^"'\s\\]+\.(?:mp4|mkv|txt|key)[^"'\s\\]*/gi],
+    ['decode',       /(?:atob|base64|decodeURIComponent|CryptoJS|AES)\s*[\(.][^\n]{0,100}/gi],
+    ['hosts',        /https?:\/\/[a-z0-9.-]+\.[a-z]{2,}/gi],
+  ];
+  for (const [label, re] of patterns) {
+    const found = [...new Set([...body.matchAll(re)].map(m => m[0].trim()))]
+      .filter(s => !NOISE.test(s)).slice(0, 8);
+    if (found.length) {
+      console.log(`      ${label}:`);
+      for (const f of found) console.log(`        ${f.substring(0, 180)}`);
+    }
+  }
+}
+
 function findM3u8(body) {
   return body.match(/https?:\/\/[^"'\s\\]+\.m3u8[^"'\s\\]*/)?.[0]
       || body.match(/file\s*:\s*["'](https?:\/\/[^"']+)["']/i)?.[1]
@@ -134,7 +155,12 @@ function findM3u8(body) {
               console.log('      (sem faixas #EXT-X-MEDIA — áudio multiplexado no vídeo)');
             }
           } else {
-            console.log(b.substring(0, 900).replace(/^/gm, '        '));
+            // Bundles minificados não se leem em dump cru — guarda em ficheiro
+            // e mostra só as pistas úteis (endpoints, ficheiros, decode).
+            const path = `/tmp/chain_${k}.html`;
+            require('fs').writeFileSync(path, b);
+            console.log(`      guardado em ${path}`);
+            hints(b);
           }
         }
         return;
