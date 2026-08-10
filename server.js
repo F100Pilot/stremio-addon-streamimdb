@@ -209,10 +209,17 @@ app.get('/health', (req, res) => {
 
 // Diagnóstico: sonda fontes candidatas a partir do IP REAL deste deploy
 // (datacenter no Vercel). Reporta status HTTP + se a resposta parece útil.
-// Uso: GET /diag/sources?tmdb=11   (11 = Star Wars; usa ?imdb=tt... também)
+// Uso: GET /diag/sources?tmdb=11  ou  GET /diag/sources?imdb=tt5216176
 const DIAG_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 app.get('/diag/sources', async (req, res) => {
-  const tmdb = req.query.tmdb || '11';
+  let tmdb = req.query.tmdb;
+  if (!tmdb && req.query.imdb) {
+    const { convertImdbToTmdb } = require('./providers');
+    const conv = await convertImdbToTmdb(req.query.imdb);
+    if (!conv) return res.status(400).json({ error: `Não foi possível converter ${req.query.imdb} para TMDB (falta TMDB_API_KEY ou título não encontrado)` });
+    tmdb = conv.id;
+  }
+  tmdb = tmdb || '11';
   const probes = [
     { name: 'vixsrc/api',   url: `https://vixsrc.to/api/movie/${tmdb}`,        ref: 'https://vixsrc.to',   hint: d => !!(d && d.src) },
     { name: 'vixsrc/movie', url: `https://vixsrc.to/movie/${tmdb}`,            ref: 'https://vixsrc.to',   hint: d => typeof d === 'string' && /token|playlist/i.test(d) },
