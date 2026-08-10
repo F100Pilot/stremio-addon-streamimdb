@@ -10,7 +10,8 @@ Deploy: servidor caseiro (Proxmox, IP residencial) via PM2 + Cloudflare Tunnel.
 Reiniciar: `pm2 restart stremio-addon --update-env`
 
 ## Stack
-`stremio-addon-sdk` · `express` · `axios` · `nodemailer` · `@movie-web/providers`
+`stremio-addon-sdk` · `express` · `axios` · `puppeteer-extra` (+stealth) ·
+`nodemailer` · `@movie-web/providers`
 
 ## Estrutura
 - `server.js` — express + `getRouter(addon)` + landing page + proxy HLS (`/hls`, `/seg`)
@@ -18,23 +19,51 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
 - `scraper.js` — orquestra fontes (cache, dedup, protecção de sobrecarga)
 - `alt_scraper.js` — tentativas axios (streamimdb.me iframe, multiembed)
 - `providers.js` — fallback movie-web (requer `TMDB_API_KEY`)
-- `datacenter_scraper.js` — fontes que funcionam de IPs de datacenter (VixSrc, Vidlink), só axios
+- `datacenter_scraper.js` — VixSrc + Vidlink, só axios
+- `vidsrc_resolver.js` — VidSrc via browser (o URL final é descodificado em WASM)
 - `health.js` — health checks periódicos + alertas
 - `diag_proxy.js` — testa a cadeia HLS completa (master→variante→segmento) via domínio público
 - `diag_subs.js` — despeja faixas de legendas (`#EXT-X-MEDIA:TYPE=SUBTITLES`) do master m3u8
+- `diag_audio.js` — lista faixas de áudio por fonte ("tem inglês?")
+- `diag_newsrc.js` — sonda fontes candidatas a partir do IP residencial
+- `diag_chain.js` — segue cadeias de embeds até ao m3u8
 
 ## Fluxo do Scraper (ordem de tentativas em `fetchVideoSource`)
-1. **datacenter_scraper** (VixSrc, Vidlink — só axios) — fonte principal.
-2. **alt_scraper** (axios) — extrai iframe do streamimdb.me → CDN. Best-effort
-   (mantido como fallback leve, sem garantia de funcionar).
-3. **movie-web providers** — último recurso (lento, ~30s timeout).
+1. **datacenter_scraper** (VixSrc, Vidlink — só axios) — devolve **todas** as
+   fontes que resolverem, não pára na primeira (cada uma tem faixas de áudio
+   diferentes; a fonte vai no título do stream para dar a escolher no Stremio).
+2. **vidsrc_resolver** (browser) — **só corre se nenhuma das anteriores tiver
+   áudio inglês** (`hasEnglishAudio` em `scraper.js` verifica o master m3u8).
+3. **alt_scraper** (axios) — streamimdb.me. Best-effort.
+4. **movie-web providers** — último recurso, lento. Em Jul/2026 todos os 11
+   providers estavam mortos; mantido caso ressuscitem.
 
-> **Nota histórica:** o `puppeteer_resolver.js` (Chromium+Xvfb p/ passar o
-> Cloudflare Turnstile do streamimdb.me) foi removido — essa fonte deixou de
-> funcionar de forma fiável e o `datacenter_scraper` (VixSrc/Vidlink) cobre o
-> essencial sem o custo de RAM/Xvfb e sem os falsos alertas de "Puppeteer
-> bloqueado". Se for preciso reaver, está no histórico do git antes desta
-> remoção.
+### Áudio inglês — o problema e o que o resolve
+A VixSrc é uma fonte **italiana**. Duas coisas distintas:
+1. **Ordem/default das faixas** — quando o inglês existe mas não é o default.
+   Resolvido por `&lang=en` no URL do playlist (`VIXSRC_LANG`) + a reescrita
+   em `rewriteManifest` como rede de segurança.
+2. **Inglês não existe de todo** — há títulos (ex.: Chicago Med) em que a
+   VixSrc só tem ita/ger. Nenhuma reescrita resolve isto; é preciso outra
+   fonte. É para isto que existe o `vidsrc_resolver`.
+
+### Porquê browser no VidSrc (e porquê não era viável no streamimdb.me)
+Cadeia: `vidsrc.in/embed` → `vsembed.ru` → `cloudorchestranova.com/embed/player`.
+Todos os passos respondem a axios; o que **não** dá para replicar é o último —
+o `vsdec.js` descodifica o URL do `.m3u8` em **WebAssembly**. O browser executa
+o WASM naturalmente e nós interceptamos o `.m3u8` na rede.
+
+Diferença crítica para o antigo `puppeteer_resolver` (removido): esta cadeia
+**não tem Cloudflare Turnstile** em passo nenhum. Foi o loop infinito de
+challenges do streamimdb.me que tornava o outro inviável e exigia headful+Xvfb;
+aqui basta headless normal, sem Xvfb.
+
+**Fontes já descartadas** (investigação de Jul/2026, ver histórico):
+`primewire.mov`/`primesrc.me` (o `/api/v1/s` responde e lista servidores em
+inglês, mas o `/api/v1/l` está atrás de Cloudflare), `2embed.cc` (é hoje uma
+landing de anúncios), `smashystream` (redirecciona para `anyembed.xyz`, cuja
+API exige sessão + Turnstile), `dooflix` (alcançável mas exige API key),
+`vidsrc.pm` (Turnstile no `nextgencloudfabric.com`).
 
 ## Proxy HLS (`server.js`)
 - Stream `proxyable:true` → `addon.js` cria `/hls/{token}.m3u8` com `{u, r}` (r = referer da fonte)
@@ -147,6 +176,11 @@ proxy serve (curl ao `/hls/...`) confirma se a reescrita aplicou bem.
 | `CACHE_TTL_MS` | `300000` (5min) |
 | `MAX_QUEUE` | `8` |
 | `MAX_SEG_RETRIES` | `1` (retries on 502/403) |
+| `VIXSRC_LANG` | `en` (língua pedida à VixSrc no URL do playlist) |
+| `VIDSRC_HEADLESS` | `new` (sem Turnstile aqui, headless chega; `false` p/ headful) |
+| `VIDSRC_CONCURRENCY` | `2` (resoluções por browser em paralelo) |
+| `VIDSRC_NAV_TIMEOUT_MS` | `30000` |
+| `VIDSRC_IDLE_CLOSE_MS` | `300000` (fecha o browser após inatividade) |
 | `HEALTH_CHECK_INTERVAL_MS` | `300000` (5min) |
 | `ALERT_WEBHOOK` | — (Slack/Discord) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — (alertas Telegram) |

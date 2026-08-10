@@ -1,7 +1,43 @@
 'use strict';
+const axios = require('axios');
 const { fetchFromProviders } = require('./providers');
 const { fetchFromAltSources } = require('./alt_scraper');
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
+const { resolveVidsrc } = require('./vidsrc_resolver');
+
+const AUDIO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
+
+// Algum dos streams tem faixa de áudio inglesa?
+//
+// Decide se vale a pena acordar o browser: só se nenhuma fonte rápida trouxer
+// inglês. Custa um GET ao master m3u8 por stream (~100ms), muito menos do que
+// lançar o Chromium à toa.
+//
+// Nota: um master SEM faixas #EXT-X-MEDIA:TYPE=AUDIO tem o áudio multiplexado
+// no vídeo — não dá para saber a língua sem descarregar segmentos, por isso
+// assume-se que serve (a maioria dessas fontes é anglófona) e não se paga o
+// custo do browser.
+async function hasEnglishAudio(streams) {
+  for (const s of streams) {
+    if (!s || !s.url) continue;
+    try {
+      const res = await axios.get(s.url, {
+        headers: { 'User-Agent': AUDIO_UA, ...(s.referer ? { Referer: s.referer } : {}) },
+        timeout: 8000, responseType: 'text', maxRedirects: 5, validateStatus: () => true,
+      });
+      const body = typeof res.data === 'string' ? res.data : '';
+      const tracks = body.split('\n').filter(l => /^#EXT-X-MEDIA:.*TYPE=AUDIO/i.test(l.trim()));
+      if (!tracks.length) return true; // áudio multiplexado — ver nota acima
+      if (tracks.some(t => /LANGUAGE="en|NAME="[^"]*English/i.test(t))) return true;
+    } catch (e) {
+      // Não conseguir verificar não é motivo para lançar o browser: pode ser
+      // só a CDN a recusar este pedido, com o stream a funcionar no cliente.
+      console.log(`[scraper] verificação de áudio falhou (${s.source || '?'}): ${e.message}`);
+      return true;
+    }
+  }
+  return false;
+}
 
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000;
 const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 8;
@@ -64,11 +100,26 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     // 1. datacenter_scraper (VixSrc, Vidlink) — só axios, mais rápido; URLs
     // entregues directo ao cliente (proxyable:false), que tenta com o seu
     // próprio IP residencial. Vale sempre a pena tentar primeiro: evita
-    // acordar o Puppeteer quando estas fontes resolvem.
+    // acordar o browser quando estas fontes resolvem.
+    let dcStreams = null;
     try {
-      const streams = await fetchFromDatacenterSources(imdbId, type, season, episode);
-      if (streams) { console.log('[scraper] datacenter sources OK'); setCached(key, streams); return streams; }
+      dcStreams = await fetchFromDatacenterSources(imdbId, type, season, episode);
+      if (dcStreams) console.log('[scraper] datacenter sources OK');
     } catch (e) { console.log('[scraper] datacenter sources falhou:', e.message); }
+
+    // 1b. VidSrc por browser — só quando é preciso. A VixSrc é italiana e há
+    // títulos que só traz em ita/ger (ex.: Chicago Med); nesses casos vale a
+    // pena pagar o custo do Chromium para ter uma opção em inglês. Se as
+    // fontes rápidas já trazem inglês, o browser nem chega a arrancar.
+    if (!dcStreams || !(await hasEnglishAudio(dcStreams))) {
+      console.log('[scraper] sem áudio inglês nas fontes rápidas — a tentar VidSrc (browser)');
+      try {
+        const vs = await resolveVidsrc(imdbId, type, season, episode);
+        if (vs) dcStreams = [...(dcStreams || []), ...vs];
+      } catch (e) { console.log('[scraper] VidSrc falhou:', e.message); }
+    }
+
+    if (dcStreams && dcStreams.length) { setCached(key, dcStreams); return dcStreams; }
 
     // 2. alt_scraper (axios rápido — falha no Turnstile mas tenta na mesma)
     try {
