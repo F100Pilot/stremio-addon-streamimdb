@@ -37,7 +37,10 @@ const DEBUG = process.env.VIDSRC_DEBUG === '1';
 
 // Hosts de anúncios/tracking: bloqueados para a página carregar mais depressa
 // e não abrir popunders.
-const AD_RE = /histats|doubleclick|googlesyndication|googletagmanager|google-analytics|popunder|popads|popcash|propeller|onclick|llvpn|jsdelivr\.net\/npm\/disable/i;
+// Inclui o disable-devtool: essa biblioteca detecta automação/devtools e pode
+// abortar o player antes de ele pedir o m3u8. Bloqueá-la é o que nos deixa
+// correr em headless.
+const AD_RE = /histats|doubleclick|googlesyndication|googletagmanager|google-analytics|popunder|popads|popcash|propeller|onclick|llvpn|allowtohimselfew|edtoflyawayutbefo|disable-devtool/i;
 
 // ── Browser partilhado ───────────────────────────────────────────────────────
 let browserPromise = null;
@@ -97,6 +100,54 @@ function embedUrl(imdbId, type, season, episode) {
     : `https://vidsrc.in/embed/movie/${imdbId}`;
 }
 
+// Os primeiros passos da cadeia são HTML simples — fazem-se com axios, que é
+// muito mais barato e determinista que carregá-los no browser. O browser fica
+// só para a última página (o player), onde o URL é descodificado em WASM.
+//
+// Além disso evita um problema real: a página do embed é uma *landing* com
+// `autoStart:false` que só carrega o player depois de um clique — clicar em
+// iframes aninhados é frágil, e ir direito ao playerUrl dispensa isso.
+async function resolvePlayerUrl(imdbId, type, season, episode) {
+  const axios = require('axios');
+  const get = (url, referer) => axios.get(url, {
+    headers: {
+      'User-Agent': UA,
+      'Accept': 'text/html,application/xhtml+xml,*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      ...(referer ? { Referer: referer, Origin: new URL(referer).origin } : {}),
+    },
+    timeout: 12000, maxRedirects: 5, validateStatus: () => true,
+    responseType: 'text', transformResponse: x => x,
+  });
+
+  const step1 = embedUrl(imdbId, type, season, episode);
+  const r1 = await get(step1);
+  const b1 = String(r1.data || '');
+  const vs = b1.match(/<iframe[^>]+src=["']([^"']+)["']/i)?.[1];
+  if (!vs) { console.log('[vidsrc] passo 1: sem iframe'); return null; }
+
+  const step2 = new URL(vs, step1).href;
+  const r2 = await get(step2, step1);
+  const b2 = String(r2.data || '');
+  // O iframe interno é escrito com src="https://cloudorchestranova.com/..."
+  const cn = b2.match(/src=["'](https:\/\/[^"']*cloudorchestranova[^"']+)["']/i)?.[1]
+          || b2.match(/<iframe[^>]+src=["']([^"']+)["']/i)?.[1];
+  if (!cn) { console.log('[vidsrc] passo 2: sem iframe do player'); return null; }
+
+  const step3 = new URL(cn, step2).href;
+  const r3 = await get(step3, step2);
+  const b3 = String(r3.data || '');
+  const cfgRaw = b3.match(/window\.CFG\s*=\s*(\{[\s\S]*?\})\s*[;<]/);
+  if (!cfgRaw) { console.log('[vidsrc] passo 3: sem window.CFG'); return null; }
+
+  let cfg;
+  try { cfg = JSON.parse(cfgRaw[1]); }
+  catch (e) { console.log(`[vidsrc] CFG inválido: ${e.message}`); return null; }
+  if (!cfg.playerUrl) { console.log('[vidsrc] CFG sem playerUrl'); return null; }
+
+  return { url: new URL(cfg.playerUrl, step3).href, referer: step3 };
+}
+
 async function resolveVidsrc(imdbId, type, season, episode) {
   if (!puppeteer) { console.log('[vidsrc] puppeteer indisponível — a saltar'); return null; }
 
@@ -136,20 +187,24 @@ async function resolveVidsrc(imdbId, type, season, episode) {
       page.on('framenavigated', f => console.log(`[vidsrc:frame→] ${f.url().substring(0, 130)}`));
     }
 
-    const target = embedUrl(imdbId, type, season, episode);
-    console.log(`[vidsrc] a resolver ${target}`);
-    page.goto(target, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
+    console.log(`[vidsrc] a resolver ${imdbId}${type === 'series' ? ` S${season}E${episode}` : ''}`);
+    const player = await resolvePlayerUrl(imdbId, type, season, episode);
+    if (!player) { console.log('[vidsrc] ✗ não cheguei ao playerUrl'); return null; }
+    if (DEBUG) console.log(`[vidsrc:debug] playerUrl: ${player.url}`);
 
-    // O player precisa de um clique para arrancar (#bigPlay), mas as frames
-    // aninhadas só existem depois de o JS as montar — daí insistir várias
-    // vezes em vez de um clique único a um tempo fixo.
+    // Vai direito ao player (o passo com o WASM), com o referer da página que
+    // o gerou — sem ele o token ?vs= é rejeitado.
+    await page.setExtraHTTPHeaders({ Referer: player.referer });
+    page.goto(player.url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
+
+    // Mesmo no player pode haver um botão de play a segurar o arranque.
     const clicker = setInterval(async () => {
       for (const frame of page.frames()) {
-        for (const sel of ['#bigPlay', '.jw-bigplay', '#player', 'video', 'body']) {
+        for (const sel of ['#bigPlay', '.jw-bigplay', '#player', 'video']) {
           try { await frame.click(sel, { delay: 20 }); } catch { /* selector ausente nesta frame */ }
         }
       }
-    }, 2500);
+    }, 2000);
 
     const hit = await Promise.race([
       m3u8,
