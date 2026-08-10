@@ -12,6 +12,7 @@
 require('dotenv').config();
 const axios = require('axios');
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
+const { fetchFromProviders } = require('./providers');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
@@ -47,15 +48,28 @@ async function audioTracks(url, referer) {
 (async () => {
   console.log(`\n=== ${imdbId} (${type}${type === 'series' ? ` S${season}E${episode}` : ''}) ===\n`);
 
-  const streams = await fetchFromDatacenterSources(
-    imdbId, type,
-    type === 'series' ? season : null,
-    type === 'series' ? episode : null,
-  );
+  const s1 = type === 'series' ? season : null;
+  const e1 = type === 'series' ? episode : null;
 
-  if (!streams || !streams.length) { console.log('Nenhuma fonte resolveu.'); return; }
+  const streams = (await fetchFromDatacenterSources(imdbId, type, s1, e1)) || [];
 
-  for (const s of streams) {
+  // movie-web providers: fontes anglófonas que na cadeia normal nunca chegam a
+  // correr (o VixSrc resolve primeiro e a cadeia pára). Aqui testamos sempre,
+  // para saber se valia a pena chegar-lhes quando falta inglês.
+  console.log('\n[movie-web] a testar (pode demorar ~30s)...');
+  let mw = [];
+  try {
+    mw = (await fetchFromProviders(imdbId, type, s1, e1)) || [];
+    console.log(`[movie-web] ${mw.length} stream(s)`);
+  } catch (e) {
+    console.log(`[movie-web] falhou: ${e.message}`);
+  }
+
+  const all = [...streams, ...mw.map(s => ({ ...s, source: s.source || 'movie-web' }))];
+  if (!all.length) { console.log('Nenhuma fonte resolveu.'); return; }
+
+  console.log('');
+  for (const s of all) {
     console.log(`--- ${s.source || 'desconhecida'} (${s.quality}) ---`);
     console.log(`URL: ${s.url.substring(0, 100)}...`);
     const info = await audioTracks(s.url, s.referer);
