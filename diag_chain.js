@@ -108,14 +108,34 @@ function findM3u8(body) {
         console.log(JSON.stringify(cfg, null, 2).replace(/^/gm, '      '));
 
         for (const [k, v] of Object.entries(cfg)) {
-          if (typeof v !== 'string' || !/^https?:\/\//.test(v)) continue;
-          console.log(`\n    → ${k}: ${v}`);
-          const r = await get(v, url);
+          // playerUrl vem relativo ('/embed/player/...') — resolver contra a
+          // página actual, senão perde-se justamente o passo que interessa.
+          if (typeof v !== 'string' || !/^(https?:\/\/|\/)/.test(v)) continue;
+          const target = abs(v, url);
+          if (!target) continue;
+          console.log(`\n    → ${k}: ${target}`);
+          const r = await get(target, url);
           const b = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
-          console.log(`      HTTP ${r.status} · ${b.length}b`);
+          const cf2 = /Just a moment|challenge-platform|cf-turnstile|turnstile/i.test(b);
+          console.log(`      HTTP ${r.status} · ${b.length}b${cf2 ? '  ⚠ TURNSTILE' : ''}`);
           const m = findM3u8(b);
-          if (m) { console.log(`      ★ m3u8: ${m}`); }
-          else { console.log(b.substring(0, 700).replace(/^/gm, '        ')); }
+          if (m) {
+            console.log(`      ★★★ m3u8: ${m}`);
+            const chk = await get(m, target);
+            const mb = String(chk.data || '');
+            console.log(`      fetch do m3u8: HTTP ${chk.status} · ${mb.length}b`);
+            const audio = [...mb.matchAll(/#EXT-X-MEDIA:.*TYPE=AUDIO[^\n]*/gi)].map(x => x[0]);
+            if (audio.length) {
+              console.log('      faixas de áudio:');
+              for (const a of audio) {
+                console.log(`        ${a.match(/LANGUAGE="([^"]+)"/i)?.[1] || '?'}  ${a.match(/NAME="([^"]+)"/i)?.[1] || ''}${/DEFAULT=YES/i.test(a) ? '  (default)' : ''}`);
+              }
+            } else {
+              console.log('      (sem faixas #EXT-X-MEDIA — áudio multiplexado no vídeo)');
+            }
+          } else {
+            console.log(b.substring(0, 900).replace(/^/gm, '        '));
+          }
         }
         return;
       }
