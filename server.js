@@ -259,6 +259,72 @@ app.get('/diag/sources', async (req, res) => {
   res.json({ note: 'Sondado a partir do IP deste deploy (datacenter no Vercel). looksUsable=true → vale a pena integrar.', tmdb, results });
 });
 
+// Diagnóstico: busca a página de um provider e devolve a ESTRUTURA extraída
+// (iframes, m3u8, scripts, endpoints) em vez do HTML cru — assim dá para
+// desenhar a extracção sem ter de copiar o código-fonte à mão no browser.
+//
+// Allowlist obrigatória: sem ela isto seria um proxy aberto (SSRF) — qualquer
+// um podia usar o deploy para sondar hosts internos.
+const DIAG_ALLOWED_HOSTS = [
+  'embed.smashystream.com', 'smashystream.com', 'player.smashy.stream',
+  'www.2embed.cc', '2embed.cc', 'www.2embed.skin', '2embed.skin',
+  'vidlink.pro', 'vixsrc.to', 'vidsrc.net', 'vidsrc.cc',
+  'streamimdb.me', 'multiembed.mov', 'www.nontongo.win',
+];
+
+app.get('/diag/inspect', async (req, res) => {
+  const target = req.query.url;
+  if (!target) return res.status(400).json({ error: 'falta ?url=' });
+
+  let u;
+  try { u = new URL(target); } catch { return res.status(400).json({ error: 'URL inválido' }); }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return res.status(400).json({ error: 'protocolo não suportado' });
+  if (!DIAG_ALLOWED_HOSTS.includes(u.hostname)) {
+    return res.status(403).json({ error: `host não permitido: ${u.hostname}`, allowed: DIAG_ALLOWED_HOSTS });
+  }
+
+  const ref = req.query.ref || `${u.protocol}//${u.hostname}`;
+  try {
+    const r = await axios.get(target, {
+      headers: { 'User-Agent': DIAG_UA, 'Accept': 'text/html,*/*', Referer: ref, Origin: ref },
+      timeout: 12000, maxRedirects: 5, validateStatus: () => true, httpAgent, httpsAgent,
+      responseType: 'text', transformResponse: x => x,
+    });
+    const html = typeof r.data === 'string' ? r.data : '';
+    const uniq = arr => [...new Set(arr)];
+    const grab = (re, group = 1) => {
+      const out = []; let m;
+      while ((m = re.exec(html))) out.push(m[group]);
+      return uniq(out);
+    };
+
+    res.json({
+      finalUrl: r.request?.res?.responseUrl || target,
+      status: r.status,
+      bytes: html.length,
+      iframes:   grab(/<iframe[^>]+src=["']([^"']+)["']/gi),
+      m3u8:      grab(/["'(]((?:https?:)?\/\/[^"'()\s]+\.m3u8[^"'()\s]*)["')]/gi),
+      mp4:       grab(/["'(]((?:https?:)?\/\/[^"'()\s]+\.mp4[^"'()\s]*)["')]/gi),
+      scripts:   grab(/<script[^>]+src=["']([^"']+)["']/gi).slice(0, 25),
+      // Chamadas fetch/ajax e endpoints relativos — é aqui que costuma estar
+      // o passo seguinte da cadeia (ex.: /api/source/xxx).
+      endpoints: uniq([
+        ...grab(/fetch\(\s*["'`]([^"'`]+)["'`]/gi),
+        ...grab(/url\s*:\s*["']([^"']+)["']/gi),
+        ...grab(/["'](\/[a-z0-9_\-\/]+\.php[^"']*)["']/gi),
+      ]).slice(0, 40),
+      otherHosts: uniq(
+        (html.match(/https?:\/\/[a-z0-9.\-]+/gi) || [])
+          .map(x => { try { return new URL(x).hostname; } catch { return null; } })
+          .filter(h => h && h !== u.hostname),
+      ).slice(0, 30),
+      htmlHead: html.substring(0, 1500),
+    });
+  } catch (e) {
+    res.status(502).json({ error: e.code || e.message });
+  }
+});
+
 // ── HLS proxy ────────────────────────────────────────────────────────────────
 // Stremio fetches HLS manifests and segments through these routes so that
 // the CDN always receives the required Referer/Origin headers.
