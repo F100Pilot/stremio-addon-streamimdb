@@ -152,8 +152,14 @@ async function tryVixsrc(tmdbId, type, season, episode) {
     if (parseInt(expires, 10) * 1000 - 60000 < Date.now()) { console.log('[dc:vixsrc] token expirado'); return null; }
 
     // Passo 4: master URL
+    // `lang` pede à VixSrc a versão na língua indicada. A VixSrc é uma fonte
+    // italiana e por defeito serve o áudio italiano — daí toda a ginástica de
+    // DEFAULT/reordenação em rewriteManifest. Pedir lang=en à cabeça resolve o
+    // problema na origem (a reescrita fica como rede de segurança).
+    // Configurável por VIXSRC_LANG.
     const sep = playlist.includes('?') ? '&' : '?';
-    const masterUrl = `${playlist}${sep}token=${token}&expires=${expires}&h=1`;
+    const lang = process.env.VIXSRC_LANG || 'en';
+    const masterUrl = `${playlist}${sep}token=${token}&expires=${expires}&h=1&lang=${encodeURIComponent(lang)}`;
     console.log(`[dc:vixsrc] ✓ master: ${masterUrl.substring(0, 70)}...`);
 
     // Master: uma só busca → qualidade (RESOLUTION) + legendas de fallback.
