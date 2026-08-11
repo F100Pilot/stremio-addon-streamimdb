@@ -43,9 +43,13 @@ builder.defineStreamHandler(async (args) => {
       ? `${BRIGHTPATH_BASE}/tv/${imdbId}/${season}/${episode}`
       : `${BRIGHTPATH_BASE}/movie/${imdbId}`;
 
+    // Último recurso: abrir o embed no browser do utilizador. Apontava para o
+    // streamimdb.me, que morreu com o Cloudflare Turnstile — mandava as pessoas
+    // para uma página que já não dá vídeo. O vidsrc.in é a fonte principal do
+    // browser_resolver e funciona num browser normal.
     const fallbackUrl = type === 'series'
-      ? `https://streamimdb.me/embed/${imdbId}/${season}/${episode}/`
-      : `https://streamimdb.me/embed/${imdbId}/`;
+      ? `https://vidsrc.in/embed/tv/${imdbId}/${season}-${episode}`
+      : `https://vidsrc.in/embed/movie/${imdbId}`;
 
     let result = null;
     try {

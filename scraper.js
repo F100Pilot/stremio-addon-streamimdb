@@ -3,11 +3,13 @@
 //
 // Ordem das tentativas (fetchVideoSource):
 //   1. datacenter_scraper (VixSrc, Vidlink) — só axios, funciona em datacenter/Vercel
-//   2. alt_scraper (streamimdb.me) — funciona melhor em IP residencial
-//   3. movie-web providers — último recurso (lento)
-const { fetchFromProviders } = require('./providers');
-const { fetchFromAltSources } = require('./alt_scraper');
+//   2. browser_resolver (vidsrc & cia) — precisa de Chromium, no-op no Vercel
+//   3. upstream relay — encaminha para o servidor caseiro (IP residencial)
+//
+// Foram removidos daqui o alt_scraper (streamimdb.me, morto pelo Cloudflare
+// Turnstile) e os movie-web providers (11 providers, todos mortos). Ver CLAUDE.md.
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
+const { resolveWithBrowser } = require('./browser_resolver');
 const { fetchFromUpstream } = require('./upstream_relay');
 
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000; // 5min
@@ -75,19 +77,15 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       if (streams) { console.log('[scraper] datacenter sources OK'); setCached(key, streams); return streams; }
     } catch (e) { console.log('[scraper] datacenter sources falhou:', e.message); }
 
-    // 2. alt_scraper (streamimdb.me — melhor em IP residencial)
+    // 2. Browser (vidsrc & cia) — o URL final é descodificado em WASM dentro do
+    // player, por isso não há caminho axios. Só corre onde há Chromium: no
+    // Vercel é um no-op silencioso e passamos directo ao relay.
     try {
-      const streams = await fetchFromAltSources(imdbId, type, season, episode);
-      if (streams) { console.log('[scraper] alt_scraper OK'); setCached(key, streams); return streams; }
-    } catch (e) { console.log('[scraper] alt_scraper falhou:', e.message); }
+      const streams = await resolveWithBrowser(imdbId, type, season, episode);
+      if (streams) { console.log('[scraper] browser resolver OK'); setCached(key, streams); return streams; }
+    } catch (e) { console.log('[scraper] browser resolver falhou:', e.message); }
 
-    // 3. movie-web providers (último recurso, lento)
-    try {
-      const streams = await fetchFromProviders(imdbId, type, season, episode);
-      if (streams) { console.log('[scraper] movie-web providers OK'); setCached(key, streams); return streams; }
-    } catch (e) { console.log('[scraper] movie-web providers falhou:', e.message); }
-
-    // 4. Relay para o servidor caseiro (UPSTREAM_URL) — quando as CDNs bloqueiam
+    // 3. Relay para o servidor caseiro (UPSTREAM_URL) — quando as CDNs bloqueiam
     // o IP de datacenter do Vercel (VixSrc 403), o servidor de casa (IP
     // residencial) resolve e serve via o proxy /hls dele. No-op sem a var.
     try {
