@@ -33,10 +33,24 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
    fontes que resolverem, não pára na primeira (cada uma tem faixas de áudio
    diferentes; a fonte vai no título do stream para dar a escolher no Stremio).
 2. **vidsrc_resolver** (browser) — **só corre se nenhuma das anteriores tiver
-   áudio inglês** (`hasEnglishAudio` em `scraper.js` verifica o master m3u8).
+   áudio inglês** (`annotateAudio` em `scraper.js` lê o master m3u8).
 3. **alt_scraper** (axios) — streamimdb.me. Best-effort.
 4. **movie-web providers** — último recurso, lento. Em Jul/2026 todos os 11
    providers estavam mortos; mantido caso ressuscitem.
+
+### Título do stream (o que aparece na lista do Stremio)
+Formato: `S1E1 · 1080p · VixSrc · 🔊 EN/IT`
+- **qualidade** — da `RESOLUTION` do master
+- **fonte** — cada uma traz faixas diferentes; é assim que se escolhe
+- **🔊 idiomas de áudio** — `audioLangs`, anotado por `annotateAudio` a partir
+  das faixas `#EXT-X-MEDIA:TYPE=AUDIO`; a faixa `DEFAULT=YES` vai em primeiro
+
+Quando o áudio vem **multiplexado** no vídeo (sem faixas separadas — é o caso
+do VidSrc) não há rótulo: a língua não é determinável sem descarregar
+segmentos, e um rótulo errado seria pior que nenhum.
+
+As legendas (`🔤`) foram retiradas do título — o Stremio já as expõe pelo
+`defineSubtitlesHandler`, e o que interessa para escolher o stream é o áudio.
 
 ### Áudio inglês — o problema e o que o resolve
 A VixSrc é uma fonte **italiana**. Duas coisas distintas:

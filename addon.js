@@ -66,22 +66,23 @@ builder.defineStreamHandler(async (args) => {
           ? s.url
           : makeHlsProxyUrl(s.url, s.referer || referer);
 
-        // Indica disponibilidade de legendas PT/EN (idiomas que mais interessam).
-        const langs = (s.subtitles || []).map(t => (t.lang || '').toLowerCase());
-        const subFlags = [];
-        if (langs.some(l => l.startsWith('pt'))) subFlags.push('PT');
-        if (langs.some(l => l.startsWith('en'))) subFlags.push('EN');
-        const subInfo = subFlags.length ? ` · 🔤 ${subFlags.join('/')}` : '';
+        // Idiomas de ÁUDIO (faixas do master m3u8, anotadas em scraper.js).
+        // É esta a informação que interessa para escolher o stream — a VixSrc
+        // é italiana e há títulos que só traz em ita/ger. Vazio quando o áudio
+        // vem multiplexado no vídeo: aí a língua não é determinável sem
+        // descarregar segmentos, e é preferível não mostrar rótulo nenhum a
+        // mostrar um que pode estar errado.
+        const audio = (s.audioLangs || []).map(l => l.toUpperCase());
+        const audioInfo = audio.length ? ` · 🔊 ${audio.join('/')}` : '';
 
         const titlePrefix = type === 'series' ? `S${season}E${episode} · ` : '';
-        // A fonte vai no título porque cada uma traz faixas de áudio
-        // diferentes (a VixSrc é italiana e há títulos sem inglês) — assim
+        // A fonte vai no título porque cada uma traz faixas diferentes — assim
         // dá para escolher a certa na lista do Stremio.
         const srcInfo = s.source ? ` · ${s.source}` : '';
         return {
           url:   streamUrl,
           name:  'StreamIMDb',
-          title: `${titlePrefix}${s.quality}${srcInfo}${subInfo}`,
+          title: `${titlePrefix}${s.quality}${srcInfo}${audioInfo}`,
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         };
       });

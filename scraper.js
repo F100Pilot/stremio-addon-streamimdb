@@ -7,36 +7,75 @@ const { resolveVidsrc } = require('./vidsrc_resolver');
 
 const AUDIO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
-// Algum dos streams tem faixa de áudio inglesa?
+// ISO 639-2 → 639-1: os manifests usam os dois formatos (LANGUAGE="ita" vs
+// LANGUAGE="it"), e no título queremos sempre o código curto.
+const ISO3_TO_ISO1 = {
+  eng: 'en', por: 'pt', spa: 'es', fre: 'fr', fra: 'fr', ger: 'de', deu: 'de',
+  ita: 'it', dut: 'nl', nld: 'nl', rus: 'ru', ara: 'ar', tur: 'tr', pol: 'pl',
+  rum: 'ro', ron: 'ro', jpn: 'ja', kor: 'ko', chi: 'zh', zho: 'zh', hin: 'hi',
+  cze: 'cs', ces: 'cs', dan: 'da', gre: 'el', ell: 'el', fin: 'fi', hun: 'hu',
+  nor: 'no', swe: 'sv',
+};
+const NAME_TO_ISO1 = {
+  english: 'en', portuguese: 'pt', spanish: 'es', french: 'fr', german: 'de',
+  italian: 'it', dutch: 'nl', russian: 'ru', arabic: 'ar', turkish: 'tr',
+  polish: 'pl', romanian: 'ro', japanese: 'ja', korean: 'ko', chinese: 'zh', hindi: 'hi',
+};
+function shortLang(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (ISO3_TO_ISO1[s]) return ISO3_TO_ISO1[s];
+  if (NAME_TO_ISO1[s]) return NAME_TO_ISO1[s];
+  const two = s.match(/^([a-z]{2})(?:[-_]|$)/);
+  if (two) return two[1];
+  for (const [name, code] of Object.entries(NAME_TO_ISO1)) if (s.includes(name)) return code;
+  return null;
+}
+
+// Lê o master m3u8 de cada stream e anota `audioLangs` (códigos ISO curtos das
+// faixas #EXT-X-MEDIA:TYPE=AUDIO). Devolve true se alguma tiver inglês.
 //
-// Decide se vale a pena acordar o browser: só se nenhuma fonte rápida trouxer
-// inglês. Custa um GET ao master m3u8 por stream (~100ms), muito menos do que
-// lançar o Chromium à toa.
+// Serve dois propósitos de uma só leitura: decidir se vale a pena acordar o
+// browser (só se ninguém tiver inglês) e alimentar o rótulo de áudio que vai
+// no título do stream.
 //
-// Nota: um master SEM faixas #EXT-X-MEDIA:TYPE=AUDIO tem o áudio multiplexado
-// no vídeo — não dá para saber a língua sem descarregar segmentos, por isso
-// assume-se que serve (a maioria dessas fontes é anglófona) e não se paga o
-// custo do browser.
-async function hasEnglishAudio(streams) {
-  for (const s of streams) {
-    if (!s || !s.url) continue;
+// Um master SEM faixas TYPE=AUDIO tem o áudio multiplexado no vídeo: não dá
+// para saber a língua sem descarregar segmentos. Nesse caso fica
+// `audioLangs: []` e assume-se que serve — não se paga o custo do browser nem
+// se inventa um idioma no título.
+async function annotateAudio(streams) {
+  if (!streams || !streams.length) return false;
+
+  await Promise.all(streams.map(async s => {
+    if (!s || !s.url || s.audioLangs) return;
+    s.audioLangs = [];
     try {
       const res = await axios.get(s.url, {
         headers: { 'User-Agent': AUDIO_UA, ...(s.referer ? { Referer: s.referer } : {}) },
         timeout: 8000, responseType: 'text', maxRedirects: 5, validateStatus: () => true,
       });
       const body = typeof res.data === 'string' ? res.data : '';
-      const tracks = body.split('\n').filter(l => /^#EXT-X-MEDIA:.*TYPE=AUDIO/i.test(l.trim()));
-      if (!tracks.length) return true; // áudio multiplexado — ver nota acima
-      if (tracks.some(t => /LANGUAGE="en|NAME="[^"]*English/i.test(t))) return true;
+      const langs = [];
+      for (const line of body.split('\n')) {
+        const t = line.trim();
+        if (!/^#EXT-X-MEDIA:.*TYPE=AUDIO/i.test(t)) continue;
+        const code = shortLang(t.match(/LANGUAGE="([^"]+)"/i)?.[1] || t.match(/NAME="([^"]+)"/i)?.[1]);
+        // A faixa default primeiro: é a que o player vai usar.
+        if (code && !langs.includes(code)) {
+          if (/DEFAULT=YES/i.test(t)) langs.unshift(code); else langs.push(code);
+        }
+      }
+      s.audioLangs = langs;
     } catch (e) {
-      // Não conseguir verificar não é motivo para lançar o browser: pode ser
-      // só a CDN a recusar este pedido, com o stream a funcionar no cliente.
-      console.log(`[scraper] verificação de áudio falhou (${s.source || '?'}): ${e.message}`);
-      return true;
+      // Não conseguir ler não significa que o stream não preste: pode ser só a
+      // CDN a recusar-nos este pedido. Fica sem rótulo e marcado como
+      // "desconhecido" para não disparar o browser à toa.
+      console.log(`[scraper] leitura de áudio falhou (${s.source || '?'}): ${e.message}`);
+      s.audioUnknown = true;
     }
-  }
-  return false;
+  }));
+
+  return streams.some(s => s.audioLangs?.includes('en') || !s.audioLangs?.length);
 }
 
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000;
@@ -111,11 +150,14 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     // títulos que só traz em ita/ger (ex.: Chicago Med); nesses casos vale a
     // pena pagar o custo do Chromium para ter uma opção em inglês. Se as
     // fontes rápidas já trazem inglês, o browser nem chega a arrancar.
-    if (!dcStreams || !(await hasEnglishAudio(dcStreams))) {
+    if (!dcStreams || !(await annotateAudio(dcStreams))) {
       console.log('[scraper] sem áudio inglês nas fontes rápidas — a tentar VidSrc (browser)');
       try {
         const vs = await resolveVidsrc(imdbId, type, season, episode);
-        if (vs) dcStreams = [...(dcStreams || []), ...vs];
+        if (vs) {
+          await annotateAudio(vs); // rótulo de idioma também para estes
+          dcStreams = [...(dcStreams || []), ...vs];
+        }
       } catch (e) { console.log('[scraper] VidSrc falhou:', e.message); }
     }
 
