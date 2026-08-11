@@ -1,4 +1,4 @@
-# StreamIMDb Connector v1.4.2
+# StreamIMDb Connector v1.5.0
 
 ## Comandos
 ```
@@ -11,21 +11,22 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
 
 ## Stack
 `stremio-addon-sdk` · `express` · `axios` · `puppeteer-extra` (+stealth) ·
-`nodemailer` · `@movie-web/providers`
+`nodemailer`
 
 ## Estrutura
 - `server.js` — express + `getRouter(addon)` + landing page + proxy HLS (`/hls`, `/seg`)
 - `addon.js` — manifesto `org.local.streamimdb` + `defineStreamHandler`
 - `scraper.js` — orquestra fontes (cache, dedup, protecção de sobrecarga)
-- `alt_scraper.js` — tentativas axios (streamimdb.me iframe, multiembed)
-- `providers.js` — fallback movie-web (requer `TMDB_API_KEY`)
 - `datacenter_scraper.js` — VixSrc + Vidlink, só axios
-- `vidsrc_resolver.js` — VidSrc via browser (o URL final é descodificado em WASM)
+- `browser_resolver.js` — fontes por browser (o URL final é descodificado em WASM); lista `PROVIDERS`
+- `tmdb.js` — conversão IMDb → TMDB (com cache de 1h)
 - `health.js` — health checks periódicos + alertas
 - `diag_proxy.js` — testa a cadeia HLS completa (master→variante→segmento) via domínio público
 - `diag_subs.js` — despeja faixas de legendas (`#EXT-X-MEDIA:TYPE=SUBTITLES`) do master m3u8
 - `diag_audio.js` — lista faixas de áudio por fonte ("tem inglês?")
 - `diag_newsrc.js` — sonda fontes candidatas a partir do IP residencial
+- `diag_browser_sources.js` — valida cada fonte do `browser_resolver` até ao m3u8
+- `diag_browser_stream.js` — disseca UMA resolução por browser (áudio, legendas, metaApi)
 - `diag_chain.js` — segue cadeias de embeds até ao m3u8
 - `subtitles_os.js` — legendas externas (OpenSubtitles) filtradas pelo release
 - `diag_os.js` — testa a procura de legendas por nome de release
@@ -34,11 +35,14 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
 1. **datacenter_scraper** (VixSrc, Vidlink — só axios) — devolve **todas** as
    fontes que resolverem, não pára na primeira (cada uma tem faixas de áudio
    diferentes; a fonte vai no título do stream para dar a escolher no Stremio).
-2. **vidsrc_resolver** (browser) — **só corre se nenhuma das anteriores tiver
-   áudio inglês** (`annotateStreams` em `scraper.js` lê o master m3u8).
-3. **alt_scraper** (axios) — streamimdb.me. Best-effort.
-4. **movie-web providers** — último recurso, lento. Em Jul/2026 todos os 11
-   providers estavam mortos; mantido caso ressuscitem.
+2. **browser_resolver** — **só corre se nenhuma das anteriores tiver áudio
+   inglês** (`annotateStreams` em `scraper.js` lê o master m3u8).
+
+Não há passo 3 nem 4. O `alt_scraper` (streamimdb.me, morto pelo Cloudflare
+Turnstile) e os movie-web providers (11 providers, todos mortos) foram
+removidos: só eram alcançados quando tudo o resto falhava, e nessa altura
+custavam até 30s de timeout para não devolver nada. O `convertImdbToTmdb`
+vivia no `providers.js` e mudou-se para o `tmdb.js`.
 
 ### Título do stream (o que aparece na lista do Stremio)
 Formato: `S1E1 · 1080p · VixSrc · 🔊 EN/IT`
@@ -68,9 +72,9 @@ A VixSrc é uma fonte **italiana**. Duas coisas distintas:
    em `rewriteManifest` como rede de segurança.
 2. **Inglês não existe de todo** — há títulos (ex.: Chicago Med) em que a
    VixSrc só tem ita/ger. Nenhuma reescrita resolve isto; é preciso outra
-   fonte. É para isto que existe o `vidsrc_resolver`.
+   fonte. É para isto que existe o `browser_resolver`.
 
-### Porquê browser no VidSrc (e porquê não era viável no streamimdb.me)
+### Porquê browser (e porquê não era viável no streamimdb.me)
 Cadeia: `vidsrc.in/embed` → `vsembed.ru` → `cloudorchestranova.com/embed/player`.
 Todos os passos respondem a axios; o que **não** dá para replicar é o último —
 o `vsdec.js` descodifica o URL do `.m3u8` em **WebAssembly**. O browser executa
@@ -209,7 +213,7 @@ assinatura `1f 8b` para o caso de vir já descomprimido).
 Diagnóstico: `node diag_os.js tt4655480 series 1 2 "<nome.do.release>"`.
 
 - **Captura na fonte**:
-  - `vidsrc_resolver.js` — `default_subs` do `metaApi` (`data.vidsrcme.ru`)
+  - `browser_resolver.js` — `default_subs` do `metaApi` (fontes em modo `chain`)
   - `datacenter_scraper.js` (VixSrc) — extrai legendas do HTML do embed
     (`extractSubsFromHtml`, vários formatos JSON) e, em fallback, do master m3u8.
     **Cuidado**: o player guarda também `thumbnailsUrl` (storyboard de preview)
@@ -229,17 +233,24 @@ Diagnóstico: `node diag_os.js tt4655480 series 1 2 "<nome.do.release>"`.
 ## Env Vars
 | Variável | Default |
 |---|---|
-| `TMDB_API_KEY` | — (obrigatório para movie-web providers) |
+| `TMDB_API_KEY` | — (obrigatório: VixSrc, Vidlink e as fontes `id:'tmdb'` do browser) |
+| `TMDB_CACHE_TTL_MS` | `3600000` (1h de cache da conversão IMDb → TMDB) |
 | `PROXY_SECRET` | aleatório por processo (definir em .env p/ persistir tokens) |
 | `VAPLAYER_API_URL` | `https://streamdata.vaplayer.ru/api.php` |
 | `CACHE_TTL_MS` | `300000` (5min) |
 | `MAX_QUEUE` | `8` |
 | `MAX_SEG_RETRIES` | `1` (retries on 502/403) |
 | `VIXSRC_LANG` | `en` (língua pedida à VixSrc no URL do playlist) |
-| `VIDSRC_HEADLESS` | `new` (sem Turnstile aqui, headless chega; `false` p/ headful) |
-| `VIDSRC_CONCURRENCY` | `2` (resoluções por browser em paralelo) |
-| `VIDSRC_NAV_TIMEOUT_MS` | `30000` |
-| `VIDSRC_IDLE_CLOSE_MS` | `300000` (fecha o browser após inatividade) |
+| `BROWSER_PROVIDERS` | — lista/ordem de fontes (ex.: `vidsrc.in,embed.su`); vazio = todas |
+| `BROWSER_HEADLESS` | `new` (sem Turnstile aqui, headless chega; `false` p/ headful) |
+| `BROWSER_CONCURRENCY` | `2` (resoluções por browser em paralelo) |
+| `BROWSER_NAV_TIMEOUT_MS` | `30000` |
+| `BROWSER_PROVIDER_MS` | `25000` (tempo máx. por fonte antes de passar à seguinte) |
+| `BROWSER_IDLE_CLOSE_MS` | `300000` (fecha o browser após inatividade) |
+| `BROWSER_CB_THRESHOLD` | `5` (falhas seguidas antes do circuit breaker) |
+| `BROWSER_CB_COOLDOWN_MS` | `600000` (10min de pausa do circuit breaker) |
+| `BROWSER_PROXYABLE` | `true` (servir via `/hls`; `false` entrega o URL directo) |
+| `BROWSER_DEBUG` | — `1` despeja rede, frames e erros da página |
 | `OPENSUBTITLES` | ligado; `off` desliga as legendas externas |
 | `OPENSUBTITLES_LANGS` | `por,pob,eng` (ISO 639-2; `pob` = PT-BR, o mais abundante) |
 | `OPENSUBTITLES_MAX` | `3` (candidatas por idioma) |

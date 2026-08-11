@@ -1,13 +1,12 @@
 {
   "name": "stremio-addon-streamimdb",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "Stremio add-on para streaming via mov2day",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "@movie-web/providers": "^2.4.13",
     "axios": "^1.7.2",
     "compression": "^1.7.4",
     "dotenv": "^16.6.1",

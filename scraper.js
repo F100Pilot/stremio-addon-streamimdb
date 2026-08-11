@@ -1,9 +1,8 @@
 'use strict';
 const axios = require('axios');
-const { fetchFromProviders, convertImdbToTmdb } = require('./providers');
-const { fetchFromAltSources } = require('./alt_scraper');
+const { convertImdbToTmdb } = require('./tmdb');
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
-const { resolveVidsrc } = require('./vidsrc_resolver');
+const { resolveWithBrowser } = require('./browser_resolver');
 const { fetchSubtitlesForRelease } = require('./subtitles_os');
 
 const AUDIO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
@@ -208,19 +207,23 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     try { origLang = (await convertImdbToTmdb(imdbId))?.originalLanguage || null; }
     catch (e) { console.log('[scraper] idioma original indisponível:', e.message); }
 
-    // 1b. VidSrc por browser — só quando é preciso. A VixSrc é italiana e há
-    // títulos que só traz em ita/ger (ex.: Chicago Med); nesses casos vale a
-    // pena pagar o custo do Chromium para ter uma opção em inglês. Se as
-    // fontes rápidas já trazem inglês, o browser nem chega a arrancar.
+    // 1b. Browser — só quando é preciso. A VixSrc é italiana e há títulos que
+    // só traz em ita/ger (ex.: Chicago Med); nesses casos vale a pena pagar o
+    // custo do Chromium para ter uma opção em inglês. Se as fontes rápidas já
+    // trazem inglês, o browser nem chega a arrancar.
+    //
+    // O `resolveVidsrc` foi substituído pelo `resolveWithBrowser`, que tenta
+    // uma lista de fontes em sequência em vez de só o vidsrc.in — o vidsrc.in
+    // continua a ser a primeira da lista e usa exactamente a mesma cadeia.
     if (!dcStreams || !(await annotateStreams(dcStreams, origLang))) {
-      console.log('[scraper] sem áudio inglês nas fontes rápidas — a tentar VidSrc (browser)');
+      console.log('[scraper] sem áudio inglês nas fontes rápidas — a tentar o browser');
       try {
-        const vs = await resolveVidsrc(imdbId, type, season, episode);
+        const vs = await resolveWithBrowser(imdbId, type, season, episode);
         if (vs) {
           await annotateStreams(vs, origLang); // idioma + qualidade também para estes
           dcStreams = [...(dcStreams || []), ...vs];
         }
-      } catch (e) { console.log('[scraper] VidSrc falhou:', e.message); }
+      } catch (e) { console.log('[scraper] browser resolver falhou:', e.message); }
     }
 
     // 1c. Legendas externas, só para os streams que NÃO trazem as suas.
@@ -232,19 +235,10 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       return dcStreams;
     }
 
-    // 2. alt_scraper (axios rápido — falha no Turnstile mas tenta na mesma)
-    try {
-      const streams = await fetchFromAltSources(imdbId, type, season, episode);
-      if (streams) { console.log('[scraper] alt_scraper OK'); setCached(key, streams); return streams; }
-    } catch (e) { console.log('[scraper] alt_scraper falhou:', e.message); }
-
-    // 3. movie-web providers (último recurso, lento)
-    console.log('[scraper] A tentar movie-web providers...');
-    try {
-      const streams = await fetchFromProviders(imdbId, type, season, episode);
-      if (streams) { console.log('[scraper] movie-web providers OK'); setCached(key, streams); return streams; }
-    } catch (e) { console.log('[scraper] movie-web providers falhou:', e.message); }
-
+    // Não há passo 2 nem 3: o alt_scraper (streamimdb.me, morto pelo Cloudflare
+    // Turnstile) e os movie-web providers (11 providers, todos mortos) foram
+    // removidos. Só eram alcançados quando tudo o resto falhava, e nessa altura
+    // custavam até 30s de timeout para não devolver nada.
     return null;
   })().finally(() => {
     pending.delete(key);
