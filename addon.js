@@ -1,6 +1,6 @@
 'use strict';
 const { addonBuilder } = require('stremio-addon-sdk');
-const { fetchVideoSource, fetchSubtitles } = require('./scraper');
+const { fetchVideoSource } = require('./scraper');
 const { sign } = require('./proxy_token');
 
 const BRIGHTPATH_BASE = 'https://brightpathsignals.com/embed';
@@ -19,7 +19,7 @@ const manifest = {
   logo: 'https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png',
   types: ['movie', 'series'],
   catalogs: [],
-  resources: ['stream', 'subtitles'],
+  resources: ['stream'],
   idPrefixes: ['tt']
 };
 
@@ -83,10 +83,25 @@ builder.defineStreamHandler(async (args) => {
         // A fonte vai no título porque cada uma traz faixas diferentes — assim
         // dá para escolher a certa na lista do Stremio.
         const srcInfo = s.source ? ` · ${s.source}` : '';
+
+        // Legendas ligadas a ESTE stream. Cada fonte é um encode diferente, e
+        // as legendas de uma não sincronizam com o vídeo da outra — por isso
+        // vão aqui e não no recurso global `subtitles`, que não sabe qual dos
+        // streams está a tocar e servia sempre as mesmas.
+        const seen = new Set();
+        const subtitles = (s.subtitles || []).map((t, i) => {
+          const lang = t.lang || 'und';
+          let id = `${lang}-${i}`;
+          while (seen.has(id)) id = `${id}_`;
+          seen.add(id);
+          return { id, lang, url: makeSubProxyUrl(t.url, t.referer || s.referer || referer) };
+        });
+
         return {
           url:   streamUrl,
           name:  'StreamIMDb',
           title: `${titlePrefix}${s.quality}${srcInfo}${audioInfo}`,
+          ...(subtitles.length ? { subtitles } : {}),
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         };
       });
@@ -103,40 +118,6 @@ builder.defineStreamHandler(async (args) => {
   } catch (err) {
     console.error(`[handler] Erro inesperado: ${err.message}`);
     return { streams: [] };
-  }
-});
-
-builder.defineSubtitlesHandler(async (args) => {
-  try {
-    const parts = args.id.split(':');
-    const imdbId = parts[0];
-    const type = parts.length > 1 ? 'series' : 'movie';
-    const season = parts[1] || null;
-    const episode = parts[2] || null;
-
-    const referer = type === 'series'
-      ? `${BRIGHTPATH_BASE}/tv/${imdbId}/${season}/${episode}`
-      : `${BRIGHTPATH_BASE}/movie/${imdbId}`;
-
-    const subs = await fetchSubtitles(imdbId, type, season, episode);
-    if (!subs || !subs.length) return { subtitles: [] };
-
-    const seen = new Set();
-    const subtitles = subs.map((s, i) => {
-      // 'lang' tem de ser um código de idioma válido (ISO 639-1/2) — o Stremio
-      // usa-o para mostrar a bandeira/nome. Usar texto livre (ex.: o NAME="3-eng"
-      // bruto do m3u8) faz o Stremio rejeitar a faixa ("erro no track"/"no tracks").
-      const lang = s.lang || 'und';
-      let id = `${lang}-${i}`;
-      while (seen.has(id)) id = `${id}_`;
-      seen.add(id);
-      return { id, lang, url: makeSubProxyUrl(s.url, s.referer || referer) };
-    });
-    console.log(`[handler] ${subtitles.length} legenda(s) para ${args.id}`);
-    return { subtitles };
-  } catch (err) {
-    console.error(`[handler/subs] Erro: ${err.message}`);
-    return { subtitles: [] };
   }
 });
 

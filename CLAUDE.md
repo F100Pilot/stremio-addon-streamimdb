@@ -168,10 +168,20 @@ Diagnóstico: `node diag_subs.js [tmdbId] [s] [e]` despeja as faixas `TYPE=AUDIO
 proxy serve (curl ao `/hls/...`) confirma se a reescrita aplicou bem.
 
 ## Legendas (subtitles)
-- Manifesto declara `resources: ['stream', 'subtitles']`; `addon.js` define
-  `defineSubtitlesHandler` que chama `fetchSubtitles` (em `scraper.js`, reaproveita
-  a cache de `fetchVideoSource` — a resolução do stream é que popula `subtitles`).
+**As legendas vão dentro de cada stream (`Stream.subtitles`), não no recurso
+global `subtitles`.** Isto não é detalhe de estilo — é o que evita
+dessincronização: cada fonte é um **encode diferente** (releases distintas, com
+cortes e durações distintas), e o recurso global não sabe qual dos streams está
+a tocar, pelo que servia sempre as legendas da primeira fonte que as tivesse
+(na prática, as do VixSrc por cima do vídeo do VidSrc → fora de sincronia).
+Por isso `resources` declara só `['stream']`.
+
+Consequência: uma fonte sem legendas próprias fica **sem legendas**, em vez de
+herdar as de outra. É o comportamento correcto — legendas erradas são piores
+que nenhumas.
+
 - **Captura na fonte**:
+  - `vidsrc_resolver.js` — `default_subs` do `metaApi` (`data.vidsrcme.ru`)
   - `datacenter_scraper.js` (VixSrc) — extrai legendas do HTML do embed
     (`extractSubsFromHtml`, vários formatos JSON) e, em fallback, do master m3u8.
     **Cuidado**: o player guarda também `thumbnailsUrl` (storyboard de preview)

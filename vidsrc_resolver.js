@@ -145,7 +145,22 @@ async function resolvePlayerUrl(imdbId, type, season, episode) {
   catch (e) { console.log(`[vidsrc] CFG inválido: ${e.message}`); return null; }
   if (!cfg.playerUrl) { console.log('[vidsrc] CFG sem playerUrl'); return null; }
 
-  return { url: new URL(cfg.playerUrl, step3).href, referer: step3 };
+  // Legendas próprias desta fonte (`default_subs` do metaApi). São as que
+  // correspondem a ESTE encode — usar as de outra fonte dessincroniza, porque
+  // são releases diferentes.
+  let subtitles = [];
+  if (cfg.metaApi) {
+    try {
+      const meta = await get(cfg.metaApi, step3);
+      const data = typeof meta.data === 'string' ? JSON.parse(meta.data) : meta.data;
+      subtitles = (data?.default_subs || [])
+        .map(s => ({ url: s.url || s.file || s.src, lang: s.lang || s.language || s.label || null }))
+        .filter(s => s.url);
+      console.log(`[vidsrc] ${subtitles.length} legenda(s) próprias`);
+    } catch (e) { console.log(`[vidsrc] metaApi falhou: ${e.message}`); }
+  }
+
+  return { url: new URL(cfg.playerUrl, step3).href, referer: step3, subtitles };
 }
 
 async function resolveVidsrc(imdbId, type, season, episode) {
@@ -229,6 +244,7 @@ async function resolveVidsrc(imdbId, type, season, episode) {
       proxyable: true,
       referer: hit.referer || 'https://cloudorchestranova.com/',
       source: 'VidSrc',
+      subtitles: player.subtitles || [],
     }];
   } catch (e) {
     console.log(`[vidsrc] erro: ${e.message}`);
