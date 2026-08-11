@@ -100,6 +100,24 @@ No caso do `multiembed` isto fecha a questão de vez: já tinha falhado por axio
 que era a única hipótese que restava — não é JS por executar, é não haver player
 nenhum. **Não vale a pena voltar a testá-las.**
 
+### Health check — testa as fontes REAIS
+Até ao v1.5.0 o health check sondava o `streamimdb.me`, que já não era usado
+pela aplicação: dava alertas sobre uma fonte irrelevante e ficava calado quando
+as fontes a sério caíam. Agora testa as duas que a aplicação usa:
+- **VixSrc** — `GET /api/movie/11`, basta vir `src` na resposta
+- **vidsrc.in** — segue a cadeia com axios (`vidsrc.in` → `vsembed` →
+  `cloudorchestranova`) e confirma que a página do player traz
+  `window.CFG` com `playerUrl`
+
+O segundo **não lança o browser** de propósito: fazê-lo de 5 em 5 minutos era
+caro de mais. Se o `window.CFG` lá está, o que falta é só executar o WASM; se
+não está, a cadeia partiu e o resolver vai falhar de certeza.
+
+Três estados, com alerta na transição (nunca repetido de 5 em 5 minutos):
+`ok` (as duas vivas) · `degradado` (uma viva — ainda serve, mas sem
+redundância) · `down` (nenhuma). O `/health` expõe o detalhe por fonte
+em `sources`.
+
 ## Proxy HLS (`server.js`)
 - Stream `proxyable:true` → `addon.js` cria `/hls/{token}.m3u8` com `{u, r}` (r = referer da fonte)
 - **Token assinado (HMAC-SHA256)** via `proxy_token.js` (`sign`/`verify`) — impede
