@@ -32,19 +32,32 @@ function shortLang(raw) {
   return null;
 }
 
-// Lê o master m3u8 de cada stream e anota `audioLangs` (códigos ISO curtos das
-// faixas #EXT-X-MEDIA:TYPE=AUDIO). Devolve true se alguma tiver inglês.
-//
-// Serve dois propósitos de uma só leitura: decidir se vale a pena acordar o
-// browser (só se ninguém tiver inglês) e alimentar o rótulo de áudio que vai
-// no título do stream.
+// Rótulo da resolução máxima anunciada no master (#EXT-X-STREAM-INF).
+// Mesmos limiares do detectQuality em datacenter_scraper.js, para os títulos
+// ficarem consistentes entre fontes.
+const RES_THRESHOLDS = [[2160, '4K'], [1440, '1440p'], [1080, '1080p'], [720, '720p'], [480, '480p']];
+function maxQualityLabel(m3u8) {
+  let maxH = 0;
+  for (const line of m3u8.split('\n')) {
+    const m = line.match(/RESOLUTION=\d+x(\d+)/i);
+    if (m) maxH = Math.max(maxH, parseInt(m[1], 10));
+  }
+  if (!maxH) return null;
+  for (const [min, label] of RES_THRESHOLDS) if (maxH >= min) return label;
+  return `${maxH}p`;
+}
+
+// Lê o master m3u8 de cada stream, uma só vez, e anota:
+//   - `audioLangs` — códigos ISO das faixas #EXT-X-MEDIA:TYPE=AUDIO
+//   - `quality`    — resolução máxima, quando a fonte não a soube dizer
+// Devolve true se algum stream serve para quem quer inglês.
 //
 // Um master SEM faixas TYPE=AUDIO tem o áudio multiplexado no vídeo e a língua
 // não é legível no manifesto. Nesses casos usa-se o idioma original do título
 // (TMDB) como estimativa, marcada com `audioInferred` — o título mostra-a com
 // asterisco para não a fazer passar por leitura directa. É uma estimativa boa
 // para releases WEB-DL/BluRay originais, mas erra numa dobragem.
-async function annotateAudio(streams, originalLanguage = null) {
+async function annotateStreams(streams, originalLanguage = null) {
   if (!streams || !streams.length) return false;
 
   await Promise.all(streams.map(async s => {
@@ -67,6 +80,14 @@ async function annotateAudio(streams, originalLanguage = null) {
         }
       }
       s.audioLangs = langs;
+
+      // Qualidade máxima, da mesma leitura do master. Fontes que já a trazem
+      // (VixSrc calcula-a em masterInfo) ficam intactas; o VidSrc chega aqui
+      // com 'Auto' porque o resolver captura o URL da rede sem ler o conteúdo.
+      if (!s.quality || s.quality === 'Auto') {
+        const q = maxQualityLabel(body);
+        if (q) s.quality = q;
+      }
       if (!langs.length && originalLanguage) {
         s.audioLangs = [originalLanguage];
         s.audioInferred = true; // veio do TMDB, não do manifesto
@@ -156,7 +177,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     } catch (e) { console.log('[scraper] datacenter sources falhou:', e.message); }
 
     // Idioma original do título — estimativa para os streams cujo áudio vem
-    // multiplexado (ver `annotateAudio`). Falha em silêncio: sem isto os
+    // multiplexado (ver `annotateStreams`). Falha em silêncio: sem isto os
     // streams ficam apenas sem rótulo.
     let origLang = null;
     try { origLang = (await convertImdbToTmdb(imdbId))?.originalLanguage || null; }
@@ -166,12 +187,12 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     // títulos que só traz em ita/ger (ex.: Chicago Med); nesses casos vale a
     // pena pagar o custo do Chromium para ter uma opção em inglês. Se as
     // fontes rápidas já trazem inglês, o browser nem chega a arrancar.
-    if (!dcStreams || !(await annotateAudio(dcStreams, origLang))) {
+    if (!dcStreams || !(await annotateStreams(dcStreams, origLang))) {
       console.log('[scraper] sem áudio inglês nas fontes rápidas — a tentar VidSrc (browser)');
       try {
         const vs = await resolveVidsrc(imdbId, type, season, episode);
         if (vs) {
-          await annotateAudio(vs, origLang); // rótulo de idioma também para estes
+          await annotateStreams(vs, origLang); // idioma + qualidade também para estes
           dcStreams = [...(dcStreams || []), ...vs];
         }
       } catch (e) { console.log('[scraper] VidSrc falhou:', e.message); }

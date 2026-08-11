@@ -33,16 +33,18 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
    fontes que resolverem, não pára na primeira (cada uma tem faixas de áudio
    diferentes; a fonte vai no título do stream para dar a escolher no Stremio).
 2. **vidsrc_resolver** (browser) — **só corre se nenhuma das anteriores tiver
-   áudio inglês** (`annotateAudio` em `scraper.js` lê o master m3u8).
+   áudio inglês** (`annotateStreams` em `scraper.js` lê o master m3u8).
 3. **alt_scraper** (axios) — streamimdb.me. Best-effort.
 4. **movie-web providers** — último recurso, lento. Em Jul/2026 todos os 11
    providers estavam mortos; mantido caso ressuscitem.
 
 ### Título do stream (o que aparece na lista do Stremio)
 Formato: `S1E1 · 1080p · VixSrc · 🔊 EN/IT`
-- **qualidade** — da `RESOLUTION` do master
+- **qualidade** — resolução máxima anunciada no master (`RESOLUTION`). É um
+  rótulo do que a fonte tem; o stream continua a ser o master adaptativo, com
+  o player a escolher a variante conforme a ligação
 - **fonte** — cada uma traz faixas diferentes; é assim que se escolhe
-- **🔊 idiomas de áudio** — `audioLangs`, anotado por `annotateAudio` a partir
+- **🔊 idiomas de áudio** — `audioLangs`, anotado por `annotateStreams` a partir
   das faixas `#EXT-X-MEDIA:TYPE=AUDIO`; a faixa `DEFAULT=YES` vai em primeiro
 
 Quando o áudio vem **multiplexado** no vídeo (sem faixas separadas — é o caso
