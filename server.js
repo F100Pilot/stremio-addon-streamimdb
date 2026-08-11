@@ -214,7 +214,7 @@ const DIAG_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (K
 app.get('/diag/sources', async (req, res) => {
   let tmdb = req.query.tmdb;
   if (!tmdb && req.query.imdb) {
-    const { convertImdbToTmdb } = require('./providers');
+    const { convertImdbToTmdb } = require('./tmdb');
     const conv = await convertImdbToTmdb(req.query.imdb);
     if (!conv) return res.status(400).json({ error: `Não foi possível converter ${req.query.imdb} para TMDB (falta TMDB_API_KEY ou título não encontrado)` });
     tmdb = conv.id;
@@ -274,6 +274,10 @@ const DIAG_ALLOWED_HOSTS = [
   'www.2embed.cc', '2embed.cc', 'www.2embed.skin', '2embed.skin',
   'vidlink.pro', 'vixsrc.to', 'vidsrc.net', 'vidsrc.cc',
   'streamimdb.me', 'multiembed.mov', 'www.nontongo.win',
+  // Fontes do browser_resolver — para poder inspeccionar a cadeia quando uma
+  // delas deixa de entregar m3u8.
+  'vidsrc.in', 'vidsrc.xyz', 'vidsrc.pm', 'embed.su', 'moviesapi.club',
+  'player.autoembed.cc', '111movies.com', 'vidsrc.icu',
 ];
 
 app.get('/diag/inspect', async (req, res) => {

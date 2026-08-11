@@ -2,70 +2,82 @@
 
 ## Comandos
 ```
-npm install          # inclui puppeteer (descarrega Chromium ~300MB)
-apt install -y xvfb  # display virtual p/ Chrome headful (passa Turnstile)
+npm install          # puppeteer é optionalDependency (Chromium ~300MB)
 node server.js       # porta 7000 ou process.env.PORT
 curl "http://localhost:7000/stream/movie/tt0076759.json"
 ```
 Deploy: servidor caseiro (Proxmox, IP residencial) via PM2 + Cloudflare Tunnel.
 Reiniciar: `pm2 restart stremio-addon --update-env`
 
-**Xvfb (obrigatório):** o Turnstile detecta Chrome headless, por isso corremos
-headful (`PPT_HEADLESS=false`) sob um display virtual:
-```
-pm2 start "Xvfb :99 -screen 0 1280x720x24 -ac" --name xvfb
-# .env: DISPLAY=:99 e PPT_HEADLESS=false
-pm2 restart stremio-addon --update-env && pm2 save
-```
+**O Xvfb já não é preciso.** Era necessário para correr o Chrome headful e
+passar o Cloudflare Turnstile do `streamimdb.me`. Essa fonte foi removida; as
+cadeias actuais (vidsrc & cia) não têm Turnstile e resolvem bem em headless.
+Se o PM2 ainda arranca `bash -c "xvfb-run -a node server.js"`, simplifica para
+`node server.js`.
+
+No Vercel não há Chromium: o `browser_resolver` é um no-op silencioso e o
+fluxo cai no upstream relay. Convém `PUPPETEER_SKIP_DOWNLOAD=true` no build
+para não descarregar 300MB que lá não servem para nada.
 
 ## Stack
-`stremio-addon-sdk` · `express` · `axios` · `puppeteer-extra` (+stealth) ·
-`xvfb` · `nodemailer` · `@movie-web/providers`
+`stremio-addon-sdk` · `express` · `axios` · `nodemailer`
+· `puppeteer-extra` (+stealth) — **opcional**, só onde há Chromium
 
 ## Estrutura
 - `server.js` — express + `getRouter(addon)` + landing page + proxy HLS (`/hls`, `/seg`)
 - `addon.js` — manifesto `org.local.streamimdb` + `defineStreamHandler`
 - `scraper.js` — orquestra fontes (cache, dedup, protecção de sobrecarga)
-- `puppeteer_resolver.js` — resolve via browser real (passa Cloudflare Turnstile); lista `PROVIDERS` com fallback
-- `alt_scraper.js` — tentativas axios (streamimdb.me iframe, multiembed)
-- `providers.js` — fallback movie-web (requer `TMDB_API_KEY`)
+- `datacenter_scraper.js` — VixSrc + Vidlink (só axios, funciona em datacenter)
+- `browser_resolver.js` — resolve via browser real; lista `PROVIDERS` tentada em sequência
+- `tmdb.js` — conversão IMDb → TMDB (com cache); usada pelas fontes que indexam por TMDB
+- `upstream_relay.js` — encaminha para outro deployment do addon (servidor caseiro)
 - `health.js` — health checks periódicos + alertas
 
 ## Fluxo do Scraper (ordem de tentativas em `fetchVideoSource`)
-1. **vaplayer** (`doFetch`) — API `streamdata.vaplayer.ru` (MORTA, 404 — mantida caso volte)
-2. **alt_scraper** (axios) — extrai iframe do streamimdb.me → CDN. Falha sozinho por causa do Turnstile.
-3. **puppeteer_resolver** — fonte principal funcional. Ver abaixo.
-4. **movie-web providers** — último recurso (lento, ~30s timeout).
+1. **datacenter_scraper** (axios) — VixSrc e Vidlink. Rápido, sem browser.
+2. **browser_resolver** — precisa de Chromium; no Vercel é saltado em silêncio.
+3. **upstream relay** — `UPSTREAM_URL` aponta ao servidor caseiro. No-op sem a var.
 
-## Fluxo do Puppeteer (a parte que funciona)
-O provider `streamimdb.me` → CDN `cloudorchestranova.com` adicionou **Cloudflare Turnstile**
-no passo `/prorcp`, que axios não consegue passar. O resolver:
-1. axios busca o embed do streamimdb.me → extrai o `src` da `#player_iframe` (URL `rcp`)
-2. Lança Chromium via **puppeteer-extra + stealth**, **headful** sob Xvfb
-   (browser **partilhado**, lazy, auto-fecho por inatividade)
-3. `page.goto(embedUrl)` **interceptado** → serve HTML limpo só com a iframe `rcp`
-   (origin = `streamimdb.me` correcta, sem os scripts de anúncio/anti-bot que apagavam a página)
-4. Clica `#pl_but` → carrega `/prorcp` → **Turnstile auto-resolve** → `POST /rcp_verify`
-5. Intercepta o `.m3u8` capturado na rede (ex.: `jejunejamboree.website/.../master.m3u8`)
-6. Devolve `{ url, quality:'Auto', proxyable:true, referer:'https://cloudorchestranova.com/' }`
+**Fontes removidas** (ver secção própria): `alt_scraper.js` (streamimdb.me,
+morto pelo Turnstile) e `providers.js` (movie-web, 11 providers todos mortos).
 
-Concorrência limitada (`PPT_CONCURRENCY`), cache de 5min evita re-resolver o mesmo título.
+## Fluxo do Browser (`browser_resolver.js`)
+Nestas cadeias o URL final do `.m3u8` é descodificado em **WebAssembly** já
+dentro do player — não há caminho axios que o replique. A solução é deixar a
+página correr e apanhar o `.m3u8` quando passa na rede.
 
-**Headless é detectado.** O Turnstile entra num loop de challenges infinito em
-headless (mesmo com stealth), mas auto-resolve em headful. Daí `PPT_HEADLESS=false`
-+ Xvfb. Diagnóstico: `PPT_HEADLESS=false xvfb-run -a node diag_ppt.js`.
+Ao contrário do antigo `puppeteer_resolver`, **nenhum destes passos tem
+Cloudflare Turnstile**. Era o loop infinito de challenges que obrigava a
+headful + Xvfb; sem ele, headless chega e gasta menos.
 
-**Circuit breaker:** após `PPT_CB_THRESHOLD` falhas seguidas, o resolver pausa
-por `PPT_CB_COOLDOWN_MS` (devolve null sem lançar browser nem tocar no Cloudflare).
-Evita martelar o CDN e degradar a reputação do IP. Estado visível em `/health`.
+Cada entrada de `PROVIDERS` tem um `mode`:
+- `chain` — axios segue os iframes (até `MAX_HOPS`) até encontrar
+  `window.CFG.playerUrl`, e só entrega ao browser a última página (a do WASM).
+  Mais barato e determinista do que carregar a cadeia toda no Chromium, e evita
+  ter de clicar em iframes aninhados. É o caminho comprovado do `vidsrc.in`.
+  Se o CFG tiver `metaApi`, lê de lá as legendas próprias da fonte e o nome do
+  release — as legendas desta fonte estão em sincronia com ESTE encode.
+- `direct` — carrega o embed directamente no browser, bloqueia anúncios e clica
+  no play em ciclo (em todas as frames) até o m3u8 aparecer.
 
-**Redundância de fontes:** `PROVIDERS` em `puppeteer_resolver.js` é uma lista tentada em sequência.
-Cada entrada tem `mode`:
-- `extract` — axios busca embed → extrai a iframe do player → carrega-a em página limpa na origin
-  do provider (evita anti-bot/ads). É o caminho comprovado do `streamimdb.me`.
-- `direct` — carrega o embed directamente no browser (stealth + bloqueio de ads).
-Para adicionar/remover fontes, edita só a lista `PROVIDERS`. As alternativas (vidsrc.net, 2embed)
-são best-effort — confirmar que estão vivas antes de confiar nelas.
+Browser partilhado e lazy, semáforo (`BROWSER_CONCURRENCY`), auto-fecho por
+inatividade e circuit breaker após `BROWSER_CB_THRESHOLD` falhas seguidas.
+Estado em `getStatus()`.
+
+**Só o `vidsrc.in` está comprovado.** As restantes fontes da lista vieram da
+sonda `diag_newsrc.js`, que só mede se o site responde a um GET — o que não é o
+mesmo que entregar vídeo. Para saber quais prestam:
+```
+node diag_browser_sources.js                       # filme por defeito
+node diag_browser_sources.js tt4655480 series 1 1  # episódio
+BROWSER_DEBUG=1 node diag_browser_sources.js       # rede, frames e erros
+```
+Corre isto **no servidor caseiro**: de um datacenter as CDNs bloqueiam o IP e
+tudo parece morto. No fim o script imprime a linha `BROWSER_PROVIDERS=...` com
+as fontes que entregaram m3u8 — mete-a no `.env` para podar a lista.
+
+Nota para quem mexer no diag: o `browser_resolver` lê as variáveis de ambiente
+no `require`, não a cada chamada. Defini-las depois do require não tem efeito.
 
 ## Proxy HLS (`server.js`)
 - Stream `proxyable:true` → `addon.js` cria `/hls/{token}.m3u8` com `{u, r}` (r = referer da fonte)
@@ -78,20 +90,23 @@ são best-effort — confirmar que estão vivas antes de confiar nelas.
 ## Env Vars
 | Variável | Default |
 |---|---|
-| `TMDB_API_KEY` | — (obrigatório para movie-web providers) |
+| `TMDB_API_KEY` | — (obrigatório: VixSrc, Vidlink e as fontes `id:'tmdb'` do browser) |
+| `TMDB_CACHE_TTL_MS` | `3600000` (1h de cache da conversão IMDb → TMDB) |
 | `PROXY_SECRET` | aleatório por processo (definir em .env p/ persistir tokens) |
-| `PPT_HEADLESS` | `new` — **definir `false`** p/ headful sob Xvfb |
-| `DISPLAY` | — (ex.: `:99`, requer Xvfb a correr) |
-| `VAPLAYER_API_URL` | `https://streamdata.vaplayer.ru/api.php` |
+| `VIXSRC_LANG` | `en` (língua pedida à VixSrc no URL do playlist) |
 | `CACHE_TTL_MS` | `300000` (5min) |
 | `MAX_QUEUE` | `8` |
 | `MAX_SEG_RETRIES` | `1` (retries on 502/403) |
-| `PPT_CONCURRENCY` | `2` (resoluções Puppeteer em paralelo) |
-| `PPT_NAV_TIMEOUT_MS` | `45000` |
-| `PPT_PROVIDER_MS` | `22000` (tempo máx. por provider antes de passar ao seguinte) |
-| `PPT_IDLE_CLOSE_MS` | `300000` (fecha browser após inatividade) |
-| `PPT_CB_THRESHOLD` | `3` (falhas seguidas antes do circuit breaker) |
-| `PPT_CB_COOLDOWN_MS` | `600000` (10min de pausa do circuit breaker) |
+| `BROWSER_PROVIDERS` | — lista/ordem de fontes (ex.: `vidsrc.in,embed.su`); vazio = todas |
+| `BROWSER_HEADLESS` | `new` (`false` só se precisares de ver o browser) |
+| `BROWSER_CONCURRENCY` | `2` (resoluções em paralelo) |
+| `BROWSER_NAV_TIMEOUT_MS` | `30000` |
+| `BROWSER_PROVIDER_MS` | `25000` (tempo máx. por fonte antes de passar à seguinte) |
+| `BROWSER_IDLE_CLOSE_MS` | `300000` (fecha browser após inatividade) |
+| `BROWSER_CB_THRESHOLD` | `5` (falhas seguidas antes do circuit breaker) |
+| `BROWSER_CB_COOLDOWN_MS` | `600000` (10min de pausa do circuit breaker) |
+| `BROWSER_PROXYABLE` | `true` (servir via `/hls`; `false` entrega o URL directo) |
+| `BROWSER_DEBUG` | — `1` despeja rede, frames e erros da página |
 | `HEALTH_CHECK_INTERVAL_MS` | `300000` (5min) |
 | `ALERT_WEBHOOK` | — (Slack/Discord) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — (alertas Telegram) |
@@ -111,6 +126,19 @@ os URLs já passam pelo proxy `/hls` do upstream, que tem o IP residencial bom).
 Sem a var, é um no-op. O health check também testa o upstream antes de declarar
 DOWN (estado "degradado" = VixSrc 403 mas relay OK).
 
+## Fontes removidas
+- **`alt_scraper.js`** (streamimdb.me + multiembed.mov) — o `streamimdb.me` pôs
+  Cloudflare Turnstile no passo `/prorcp` e axios não passa por lá. Nunca foi
+  visto a resolver nada. O fallback `externalUrl` do `addon.js`, que mandava as
+  pessoas para o embed do streamimdb.me, passou a apontar ao `vidsrc.in`.
+- **`providers.js`** (movie-web) — os 11 providers estavam todos mortos e ainda
+  assim eram chamados, com ~30s de timeout, em cada pedido sem stream. O
+  `convertImdbToTmdb` que vivia aqui mudou-se para `tmdb.js`, porque o
+  `datacenter_scraper` e o `browser_resolver` precisam dele.
+- `@movie-web/providers` saiu das dependências.
+
+Se alguma delas ressuscitar, o histórico tem o código: `git show <commit>^:alt_scraper.js`.
+
 ## Padrões
 - CommonJS (`require`). `try/catch` em todos os handlers. Séries: `tt1234567:1:2` → split.
 
@@ -120,7 +148,9 @@ DOWN (estado "degradado" = VixSrc 403 mas relay OK).
 - `backup/working-v1` — backup estável com Puppeteer (versão antiga)
 
 ## Notas
-- **Turnstile só passa em IP residencial** — em IPs de datacenter (Render) o Puppeteer falharia.
-- Primeira resolução de um título demora ~10-20s (lança browser + Turnstile); seguintes vêm da cache.
+- **As CDNs bloqueiam IPs de datacenter.** A VixSrc devolve 403 logo na API a
+  partir do Vercel. Qualquer sonda a fontes tem de correr no servidor caseiro
+  para dar resultados que signifiquem alguma coisa.
+- Primeira resolução de um título demora ~10-20s (lança browser); seguintes vêm da cache.
 - Browser partilhado + pool de concorrência mantém RAM controlada (~200-400MB) mesmo com vários utilizadores.
 - bingeGroup activo — ecrã "próximo episódio" requer clique.
