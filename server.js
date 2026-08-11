@@ -575,6 +575,33 @@ app.all('/seg/:encoded.ts', async (req, res) => {
   }
 });
 
+// Descodifica os bytes de uma legenda para texto.
+//
+// As legendas do OpenSubtitles (sobretudo PT/PT-BR) vêm quase sempre em
+// Latin-1/CP1252, não em UTF-8. Ler tudo como UTF-8 dá caracteres de
+// substituição (�) em cada acento — "ajudá-la" vira "ajud?-la" — e o
+// player pode rejeitar a faixa inteira.
+//
+// Heurística: tenta UTF-8; se aparecer o caractere de substituição, os bytes
+// não eram UTF-8 válido e relê-se como Latin-1 (que nunca falha, por ser
+// byte-a-byte). A seguir corrigem-se os caracteres do intervalo 0x80-0x9F,
+// onde CP1252 (aspas curvas, travessões) difere de Latin-1.
+const CP1252_EXTRA = {
+  0x80: '€', 0x82: '‚', 0x83: 'ƒ', 0x84: '„', 0x85: '…', 0x86: '†', 0x87: '‡',
+  0x88: 'ˆ', 0x89: '‰', 0x8a: 'Š', 0x8b: '‹', 0x8c: 'Œ', 0x8e: 'Ž', 0x91: '‘',
+  0x92: '’', 0x93: '“', 0x94: '”', 0x95: '•', 0x96: '–', 0x97: '—', 0x98: '˜',
+  0x99: '™', 0x9a: 'š', 0x9b: '›', 0x9c: 'œ', 0x9e: 'ž', 0x9f: 'Ÿ',
+};
+function decodeSubtitle(buf) {
+  const utf8 = buf.toString('utf8');
+  if (!utf8.includes('�')) return utf8;
+
+  let out = buf.toString('latin1');
+  out = out.replace(/[\u0080-\u009F]/g, c => CP1252_EXTRA[c.charCodeAt(0)] || c);
+  console.log('[proxy/sub] não era UTF-8 — descodificado como CP1252/Latin-1');
+  return out;
+}
+
 // Converte SRT → WebVTT (Stremio aceita ambos, mas servimos sempre VTT).
 function srtToVtt(srt) {
   const body = srt
@@ -640,7 +667,7 @@ app.all('/sub/:encoded.vtt', async (req, res) => {
       // Assinatura gzip (1f 8b): há servidores que já entregam descomprimido,
       // e aí o gunzip rebentaria.
       const gz = buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b;
-      txt = (gz ? zlib.gunzipSync(buf) : buf).toString('utf8');
+      txt = decodeSubtitle(gz ? zlib.gunzipSync(buf) : buf);
       console.log(`[proxy/sub] ${gz ? 'gunzip' : 'sem compressão'} → ${txt.length}b`);
     } else {
       txt = typeof upstream.data === 'string' ? upstream.data : '';
