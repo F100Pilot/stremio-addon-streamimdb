@@ -114,6 +114,10 @@ async function convertImdbToTmdb(imdbId) {
       id: result.id,
       title: result.title || result.name || '',
       releaseYear: parseInt((result.release_date || result.first_air_date || '').split('-')[0]) || undefined,
+      // Idioma original do título (ISO 639-1). Usado para rotular streams cujo
+      // áudio vem multiplexado no vídeo, onde a língua não é legível no
+      // manifesto — ver `annotateAudio` em scraper.js.
+      originalLanguage: result.original_language || null,
     };
   } catch {
     return null;

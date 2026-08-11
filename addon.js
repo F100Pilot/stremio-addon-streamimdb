@@ -72,8 +72,12 @@ builder.defineStreamHandler(async (args) => {
         // vem multiplexado no vídeo: aí a língua não é determinável sem
         // descarregar segmentos, e é preferível não mostrar rótulo nenhum a
         // mostrar um que pode estar errado.
+        // O asterisco marca idioma inferido do TMDB (áudio multiplexado, sem
+        // faixas legíveis no manifesto) — distingue-o de um valor lido.
         const audio = (s.audioLangs || []).map(l => l.toUpperCase());
-        const audioInfo = audio.length ? ` · 🔊 ${audio.join('/')}` : '';
+        const audioInfo = audio.length
+          ? ` · 🔊 ${audio.join('/')}${s.audioInferred ? '*' : ''}`
+          : '';
 
         const titlePrefix = type === 'series' ? `S${season}E${episode} · ` : '';
         // A fonte vai no título porque cada uma traz faixas diferentes — assim

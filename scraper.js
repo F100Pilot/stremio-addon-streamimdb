@@ -1,6 +1,6 @@
 'use strict';
 const axios = require('axios');
-const { fetchFromProviders } = require('./providers');
+const { fetchFromProviders, convertImdbToTmdb } = require('./providers');
 const { fetchFromAltSources } = require('./alt_scraper');
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
 const { resolveVidsrc } = require('./vidsrc_resolver');
@@ -39,11 +39,12 @@ function shortLang(raw) {
 // browser (só se ninguém tiver inglês) e alimentar o rótulo de áudio que vai
 // no título do stream.
 //
-// Um master SEM faixas TYPE=AUDIO tem o áudio multiplexado no vídeo: não dá
-// para saber a língua sem descarregar segmentos. Nesse caso fica
-// `audioLangs: []` e assume-se que serve — não se paga o custo do browser nem
-// se inventa um idioma no título.
-async function annotateAudio(streams) {
+// Um master SEM faixas TYPE=AUDIO tem o áudio multiplexado no vídeo e a língua
+// não é legível no manifesto. Nesses casos usa-se o idioma original do título
+// (TMDB) como estimativa, marcada com `audioInferred` — o título mostra-a com
+// asterisco para não a fazer passar por leitura directa. É uma estimativa boa
+// para releases WEB-DL/BluRay originais, mas erra numa dobragem.
+async function annotateAudio(streams, originalLanguage = null) {
   if (!streams || !streams.length) return false;
 
   await Promise.all(streams.map(async s => {
@@ -66,6 +67,10 @@ async function annotateAudio(streams) {
         }
       }
       s.audioLangs = langs;
+      if (!langs.length && originalLanguage) {
+        s.audioLangs = [originalLanguage];
+        s.audioInferred = true; // veio do TMDB, não do manifesto
+      }
     } catch (e) {
       // Não conseguir ler não significa que o stream não preste: pode ser só a
       // CDN a recusar-nos este pedido. Fica sem rótulo e marcado como
@@ -75,7 +80,11 @@ async function annotateAudio(streams) {
     }
   }));
 
-  return streams.some(s => s.audioLangs?.includes('en') || !s.audioLangs?.length);
+  // Para decidir se vale a pena acordar o browser, um idioma inferido ou
+  // ilegível conta como "serve": inferência não é prova de que falta inglês, e
+  // lançar o Chromium com base nela seria pagar caro por um palpite.
+  return streams.some(s =>
+    s.audioLangs?.includes('en') || s.audioInferred || s.audioUnknown || !s.audioLangs?.length);
 }
 
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000;
@@ -146,16 +155,23 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       if (dcStreams) console.log('[scraper] datacenter sources OK');
     } catch (e) { console.log('[scraper] datacenter sources falhou:', e.message); }
 
+    // Idioma original do título — estimativa para os streams cujo áudio vem
+    // multiplexado (ver `annotateAudio`). Falha em silêncio: sem isto os
+    // streams ficam apenas sem rótulo.
+    let origLang = null;
+    try { origLang = (await convertImdbToTmdb(imdbId))?.originalLanguage || null; }
+    catch (e) { console.log('[scraper] idioma original indisponível:', e.message); }
+
     // 1b. VidSrc por browser — só quando é preciso. A VixSrc é italiana e há
     // títulos que só traz em ita/ger (ex.: Chicago Med); nesses casos vale a
     // pena pagar o custo do Chromium para ter uma opção em inglês. Se as
     // fontes rápidas já trazem inglês, o browser nem chega a arrancar.
-    if (!dcStreams || !(await annotateAudio(dcStreams))) {
+    if (!dcStreams || !(await annotateAudio(dcStreams, origLang))) {
       console.log('[scraper] sem áudio inglês nas fontes rápidas — a tentar VidSrc (browser)');
       try {
         const vs = await resolveVidsrc(imdbId, type, season, episode);
         if (vs) {
-          await annotateAudio(vs); // rótulo de idioma também para estes
+          await annotateAudio(vs, origLang); // rótulo de idioma também para estes
           dcStreams = [...(dcStreams || []), ...vs];
         }
       } catch (e) { console.log('[scraper] VidSrc falhou:', e.message); }

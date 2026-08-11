@@ -46,8 +46,13 @@ Formato: `S1E1 · 1080p · VixSrc · 🔊 EN/IT`
   das faixas `#EXT-X-MEDIA:TYPE=AUDIO`; a faixa `DEFAULT=YES` vai em primeiro
 
 Quando o áudio vem **multiplexado** no vídeo (sem faixas separadas — é o caso
-do VidSrc) não há rótulo: a língua não é determinável sem descarregar
-segmentos, e um rótulo errado seria pior que nenhum.
+do VidSrc), a língua não é legível no manifesto. Aí usa-se o `originalLanguage`
+do TMDB como estimativa e o rótulo leva **asterisco**: `🔊 EN*`. Boa aposta
+para releases WEB-DL/BluRay originais; erra numa dobragem — daí o asterisco em
+vez de o dar como facto.
+
+Na decisão de acordar o browser, um idioma inferido conta como "serve": uma
+estimativa não é prova de que falta inglês, e não justifica lançar o Chromium.
 
 As legendas (`🔤`) foram retiradas do título — o Stremio já as expõe pelo
 `defineSubtitlesHandler`, e o que interessa para escolher o stream é o áudio.
