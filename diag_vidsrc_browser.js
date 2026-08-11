@@ -33,10 +33,23 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
       const body = typeof r.data === 'string' ? r.data : '';
       console.log(`  master: HTTP ${r.status} · ${body.length}b`);
       const audio = body.split('\n').filter(l => /^#EXT-X-MEDIA:.*TYPE=AUDIO/i.test(l.trim()));
-      if (!audio.length) { console.log('  (áudio multiplexado — sem faixas separadas)'); continue; }
+      console.log(`  áudio: ${audio.length ? '' : 'multiplexado (sem faixas separadas)'}`);
       for (const a of audio) {
         console.log(`    ${a.match(/LANGUAGE="([^"]+)"/i)?.[1] || '?'}  ${a.match(/NAME="([^"]+)"/i)?.[1] || ''}${/DEFAULT=YES/i.test(a) ? '  (default)' : ''}`);
       }
+
+      // Legendas embutidas no manifesto — as únicas garantidamente em sincronia
+      // com este encode. Se estiverem aqui e mesmo assim houver dessincronia,
+      // as que o player mostra vêm de outro sítio (outro addon de legendas).
+      const subs = body.split('\n').filter(l => /^#EXT-X-MEDIA:.*TYPE=SUBTITLES/i.test(l.trim()));
+      console.log(`  legendas no manifesto: ${subs.length || 'NENHUMA'}`);
+      for (const t of subs) {
+        console.log(`    ${t.match(/LANGUAGE="([^"]+)"/i)?.[1] || '?'}  ${t.match(/NAME="([^"]+)"/i)?.[1] || ''}`);
+      }
+
+      // Legendas próprias da fonte (metaApi), que é o que enviamos no stream.
+      console.log(`  legendas do metaApi: ${(s.subtitles || []).length || 'NENHUMA'}`);
+      for (const t of (s.subtitles || [])) console.log(`    ${t.lang || '?'}  ${t.url.substring(0, 80)}`);
     } catch (e) { console.log(`  ✗ ${e.message}`); }
   }
   process.exit(0);
