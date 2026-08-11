@@ -241,8 +241,8 @@ Diagnóstico: `node diag_os.js tt4655480 series 1 2 "<nome.do.release>"`.
 | `VIDSRC_NAV_TIMEOUT_MS` | `30000` |
 | `VIDSRC_IDLE_CLOSE_MS` | `300000` (fecha o browser após inatividade) |
 | `OPENSUBTITLES` | ligado; `off` desliga as legendas externas |
-| `OPENSUBTITLES_LANGS` | `eng,por` (ISO 639-2, por ordem de preferência) |
-| `OPENSUBTITLES_MAX` | `2` (candidatas por idioma) |
+| `OPENSUBTITLES_LANGS` | `por,pob,eng` (ISO 639-2; `pob` = PT-BR, o mais abundante) |
+| `OPENSUBTITLES_MAX` | `3` (candidatas por idioma) |
 | `OPENSUBTITLES_UA` | `TemporaryUserAgent` |
 | `OPENSUBTITLES_TIMEOUT_MS` | `8000` |
 | `HEALTH_CHECK_INTERVAL_MS` | `300000` (5min) |

@@ -17,9 +17,12 @@ const axios = require('axios');
 const OS_UA   = process.env.OPENSUBTITLES_UA || 'TemporaryUserAgent';
 const OS_BASE = 'https://rest.opensubtitles.org/search';
 const ENABLED = process.env.OPENSUBTITLES !== 'off';
-const LANGS   = (process.env.OPENSUBTITLES_LANGS || 'eng,por').split(',').map(s => s.trim()).filter(Boolean);
+// `pob` (português do Brasil) entra por defeito porque é de longe o idioma
+// mais abundante no OpenSubtitles — sem ele há episódios sem qualquer opção em
+// português. A ordem aqui é a ordem em que aparecem na lista do Stremio.
+const LANGS   = (process.env.OPENSUBTITLES_LANGS || 'por,pob,eng').split(',').map(s => s.trim()).filter(Boolean);
 const TIMEOUT = parseInt(process.env.OPENSUBTITLES_TIMEOUT_MS) || 8000;
-const MAX_PER_LANG = parseInt(process.env.OPENSUBTITLES_MAX) || 2;
+const MAX_PER_LANG = parseInt(process.env.OPENSUBTITLES_MAX) || 3;
 
 const ISO3_TO_ISO1 = {
   eng: 'en', por: 'pt', pob: 'pt-BR', spa: 'es', fre: 'fr', ger: 'de', ita: 'it',
@@ -109,6 +112,7 @@ async function fetchSubtitlesForRelease(imdbId, type, season, episode, releaseNa
           // 100% = mesmo release, valores baixos = palpite.
           name: `OpenSubtitles ${Math.round(match * 100)}%`,
           matchScore: match,
+          release: r.MovieReleaseName || r.SubFileName || null,
         });
       }
       console.log(`[os] ${lang}: ${results.length} resultado(s), melhor match ${Math.round((ranked[0]?.match || 0) * 100)}%`);

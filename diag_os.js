@@ -26,7 +26,9 @@ const [, , imdbId = 'tt4655480', type = 'series', season = '1', episode = '2', r
   if (!subs.length) { console.log('✗ nenhuma legenda encontrada'); return; }
   for (const s of subs) {
     console.log(`  [${s.lang}] ${s.name}`);
-    console.log(`        ${s.url.substring(0, 100)}`);
+    // O nome do release da legenda é o que permite julgar à vista se vai
+    // sincronizar: mesma fonte (WEB-DL) e mesmo grupo → quase de certeza sim.
+    if (s.release) console.log(`        release: ${s.release}`);
   }
   console.log('\nMatch alto = mesmo release = em sincronia. Match baixo = palpite.');
 })();
