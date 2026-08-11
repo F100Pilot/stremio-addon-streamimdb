@@ -125,29 +125,6 @@ const PROVIDERS = [
       ? `https://www.nontongo.win/embed/tv/${tmdbId}/${season}/${episode}`
       : `https://www.nontongo.win/embed/movie/${tmdbId}`,
   },
-  // As duas seguintes ficam no fim de propósito: são as menos prováveis de
-  // prestar, e assim não atrasam as outras em produção.
-  {
-    // O 2embed.cc foi descartado em Jul/2026 por ser hoje uma landing de
-    // anúncios. O .skin é outro domínio da mesma família — pode ter tido o
-    // mesmo destino, mas não é o mesmo host, por isso vale medir em vez de
-    // assumir. O formato do URL de série é mesmo assim (`&s=`, não `?s=`).
-    name: '2embed.skin', mode: 'direct', id: 'imdb',
-    url: ({ imdbId, type, season, episode }) => type === 'series'
-      ? `https://www.2embed.skin/embedtv/${imdbId}&s=${season}&e=${episode}`
-      : `https://www.2embed.skin/embed/${imdbId}`,
-  },
-  {
-    // O multiembed só alguma vez foi tentado por axios (o `directstream.php`
-    // do alt_scraper, removido), e nunca resolveu nada. Aqui vai a página do
-    // player em vez do directstream: é JS que monta o stream, que é justamente
-    // o que o axios não conseguia executar. Por isso é um teste novo, não uma
-    // repetição do que já falhou.
-    name: 'multiembed', mode: 'direct', id: 'imdb',
-    url: ({ imdbId, type, season, episode }) => type === 'series'
-      ? `https://multiembed.mov/?video_id=${imdbId}&s=${season}&e=${episode}`
-      : `https://multiembed.mov/?video_id=${imdbId}`,
-  },
 ];
 
 // BROWSER_PROVIDERS=vidsrc.in,embed.su restringe (e reordena) a lista.

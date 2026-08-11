@@ -92,6 +92,14 @@ landing de anúncios), `smashystream` (redirecciona para `anyembed.xyz`, cuja
 API exige sessão + Turnstile), `dooflix` (alcançável mas exige API key),
 `vidsrc.pm` (Turnstile no `nextgencloudfabric.com`).
 
+Ago/2026, testadas com browser no servidor caseiro e descartadas:
+`2embed.skin` e `multiembed.mov` — ambas devolvem HTTP 200 mas a página não tem
+`<video>` nem iframe de player. São landings de anúncios, tal como o `2embed.cc`.
+No caso do `multiembed` isto fecha a questão de vez: já tinha falhado por axios
+(o `directstream.php` do antigo `alt_scraper`) e agora falhou também com browser,
+que era a única hipótese que restava — não é JS por executar, é não haver player
+nenhum. **Não vale a pena voltar a testá-las.**
+
 ## Proxy HLS (`server.js`)
 - Stream `proxyable:true` → `addon.js` cria `/hls/{token}.m3u8` com `{u, r}` (r = referer da fonte)
 - **Token assinado (HMAC-SHA256)** via `proxy_token.js` (`sign`/`verify`) — impede

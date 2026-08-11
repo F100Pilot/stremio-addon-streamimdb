@@ -16,6 +16,11 @@ const [, , TMDB = '62650', IMDB = 'tt4655480', S = '1', E = '1'] = process.argv;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
 // Cada candidato: como construir o URL da série + o que conta como "útil".
+// NOTA: o 2embed.cc, o 2embed.skin e o multiembed.mov foram tirados desta lista
+// de propósito. Todos respondem HTTP 200 com HTML, por isso esta sonda dava-lhes
+// "OK" — mas são landings de anúncios, sem player nenhum. Foram confirmados
+// mortos com browser em Ago/2026 (ver "Fontes já descartadas" no CLAUDE.md).
+// Responder a um GET não é entregar vídeo; é essa a limitação desta sonda.
 const CANDIDATES = [
   { name: 'primewire.mov /s', url: `https://primewire.mov/api/v1/s?type=tv&tmdb=${TMDB}&season=${S}&episode=${E}` },
   { name: 'primesrc.me /s',   url: `https://primesrc.me/api/v1/s?type=tv&tmdb=${TMDB}&season=${S}&episode=${E}` },
@@ -25,8 +30,6 @@ const CANDIDATES = [
   { name: 'vidsrc.pm',        url: `https://vidsrc.pm/embed/tv/${IMDB}/${S}-${E}` },
   { name: 'vidsrc.cc',        url: `https://vidsrc.cc/v2/embed/tv/${TMDB}/${S}/${E}` },
   { name: 'embed.su',         url: `https://embed.su/embed/tv/${TMDB}/${S}/${E}` },
-  { name: '2embed.cc',        url: `https://www.2embed.cc/embedtv/${TMDB}&s=${S}&e=${E}` },
-  { name: '2embed.skin',      url: `https://www.2embed.skin/embedtv/${IMDB}&s=${S}&e=${E}` },
   { name: 'moviesapi.club',   url: `https://moviesapi.club/tv/${TMDB}-${S}-${E}` },
   { name: 'autoembed.cc',     url: `https://player.autoembed.cc/embed/tv/${TMDB}/${S}/${E}` },
   { name: 'vidbinge.dev',     url: `https://vidbinge.dev/embed/tv/${TMDB}/${S}/${E}` },
@@ -34,7 +37,6 @@ const CANDIDATES = [
   { name: '111movies',        url: `https://111movies.com/tv/${TMDB}/${S}/${E}` },
   { name: 'vidsrc.icu',       url: `https://vidsrc.icu/embed/tv/${TMDB}/${S}/${E}` },
   { name: 'nontongo.win',     url: `https://www.nontongo.win/embed/tv/${TMDB}/${S}/${E}` },
-  { name: 'multiembed',       url: `https://multiembed.mov/?video_id=${IMDB}&s=${S}&e=${E}` },
 ];
 
 // Um "Just a moment" da Cloudflare devolve 403 + HTML de challenge; queremos
