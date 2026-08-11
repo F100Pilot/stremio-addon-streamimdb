@@ -12,7 +12,7 @@
 require('dotenv').config();
 const axios = require('axios');
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
-const { fetchFromProviders } = require('./providers');
+const { resolveWithBrowser } = require('./browser_resolver');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
@@ -53,19 +53,20 @@ async function audioTracks(url, referer) {
 
   const streams = (await fetchFromDatacenterSources(imdbId, type, s1, e1)) || [];
 
-  // movie-web providers: fontes anglófonas que na cadeia normal nunca chegam a
-  // correr (o VixSrc resolve primeiro e a cadeia pára). Aqui testamos sempre,
-  // para saber se valia a pena chegar-lhes quando falta inglês.
-  console.log('\n[movie-web] a testar (pode demorar ~30s)...');
-  let mw = [];
+  // Fontes por browser: na cadeia normal só correm quando falta inglês nas
+  // fontes rápidas. Aqui testamos sempre, para comparar as faixas de áudio das
+  // duas vias lado a lado. (Substituiu o movie-web, que foi removido — os 11
+  // providers estavam todos mortos.)
+  console.log('\n[browser] a testar (pode demorar)...');
+  let bs = [];
   try {
-    mw = (await fetchFromProviders(imdbId, type, s1, e1)) || [];
-    console.log(`[movie-web] ${mw.length} stream(s)`);
+    bs = (await resolveWithBrowser(imdbId, type, s1, e1)) || [];
+    console.log(`[browser] ${bs.length} stream(s)`);
   } catch (e) {
-    console.log(`[movie-web] falhou: ${e.message}`);
+    console.log(`[browser] falhou: ${e.message}`);
   }
 
-  const all = [...streams, ...mw.map(s => ({ ...s, source: s.source || 'movie-web' }))];
+  const all = [...streams, ...bs.map(s => ({ ...s, source: s.source || 'browser' }))];
   if (!all.length) { console.log('Nenhuma fonte resolveu.'); return; }
 
   console.log('');

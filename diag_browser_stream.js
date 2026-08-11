@@ -1,19 +1,27 @@
 'use strict';
-// Testa o vidsrc_resolver isoladamente (sem passar pelo scraper/cache) e
-// mostra as faixas de áudio do m3u8 que apanhar.
+// Testa o browser_resolver isoladamente (sem passar pelo scraper/cache) e
+// mergulha no m3u8 que apanhar: faixas de áudio, legendas do manifesto e
+// legendas próprias da fonte (metaApi).
 //
-// Uso: node diag_vidsrc_browser.js tt4655480 series 1 1
-//      node diag_vidsrc_browser.js tt0076759 movie
+// Era o diag_vidsrc_browser.js. Mudou de nome quando o vidsrc_resolver deu
+// lugar ao browser_resolver, que tenta várias fontes em vez de só o vidsrc.in.
+//
+// Complementa o diag_browser_sources.js: aquele varre todas as fontes e diz
+// quais entregam m3u8; este disseca UMA resolução em detalhe.
+//
+// Uso: node diag_browser_stream.js tt4655480 series 1 1
+//      node diag_browser_stream.js tt0076759 movie
+//      BROWSER_PROVIDERS=embed.su node diag_browser_stream.js   (fonte à escolha)
 require('dotenv').config();
 const axios = require('axios');
-const { resolveVidsrc } = require('./vidsrc_resolver');
+const { resolveWithBrowser } = require('./browser_resolver');
 
 const [, , imdbId = 'tt4655480', type = 'series', season = '1', episode = '1'] = process.argv;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
 (async () => {
   const t0 = Date.now();
-  const streams = await resolveVidsrc(
+  const streams = await resolveWithBrowser(
     imdbId, type,
     type === 'series' ? season : null,
     type === 'series' ? episode : null,
