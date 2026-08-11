@@ -30,21 +30,37 @@ require('dotenv').config();
 process.env.BROWSER_CB_THRESHOLD = '9999';
 process.env.BROWSER_PROVIDER_MS  = process.env.BROWSER_PROVIDER_MS || '20000';
 
+// Um BROWSER_PROVIDERS já definido (no .env ou na linha de comando) serve aqui
+// de filtro: testa só essas fontes. Tem de ser lido ANTES do ciclo, porque o
+// ciclo reescreve a variável a cada iteração para isolar uma fonte de cada vez.
+const FILTRO = (process.env.BROWSER_PROVIDERS || '').split(',').map(s => s.trim()).filter(Boolean);
+
 const { PROVIDERS, resolveWithBrowser } = require('./browser_resolver');
 
 const [, , IMDB = 'tt0076759', TYPE = 'movie', S = null, E = null] = process.argv;
 
+const ALVO = FILTRO.length
+  ? FILTRO.map(n => PROVIDERS.find(p => p.name === n)).filter(Boolean)
+  : PROVIDERS;
+
 (async () => {
   console.log(`\nValidação das fontes do browser_resolver`);
   console.log(`Título: ${IMDB} ${TYPE}${TYPE === 'series' ? ` S${S}E${E}` : ''}`);
-  console.log(`Fontes a testar: ${PROVIDERS.length}\n`);
+  console.log(`Fontes a testar: ${ALVO.length}${FILTRO.length ? ` (filtradas de ${PROVIDERS.length})` : ''}\n`);
+
+  const desconhecidas = FILTRO.filter(n => !PROVIDERS.some(p => p.name === n));
+  if (desconhecidas.length) {
+    console.log(`AVISO: nome(s) não reconhecido(s) em BROWSER_PROVIDERS: ${desconhecidas.join(', ')}`);
+    console.log(`Nomes válidos: ${PROVIDERS.map(p => p.name).join(', ')}\n`);
+  }
+  if (!ALVO.length) { console.log('Nada para testar.\n'); process.exit(1); }
 
   if (!process.env.TMDB_API_KEY) {
     console.log('AVISO: TMDB_API_KEY não definida — as fontes indexadas por TMDB vão ser saltadas.\n');
   }
 
   const results = [];
-  for (const p of PROVIDERS) {
+  for (const p of ALVO) {
     // resolveWithBrowser pára na primeira fonte que resolve; restringir a lista
     // a uma fonte de cada vez é o que nos dá um veredicto por fonte.
     process.env.BROWSER_PROVIDERS = p.name;
