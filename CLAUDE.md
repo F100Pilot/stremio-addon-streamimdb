@@ -27,6 +27,8 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
 - `diag_audio.js` — lista faixas de áudio por fonte ("tem inglês?")
 - `diag_newsrc.js` — sonda fontes candidatas a partir do IP residencial
 - `diag_chain.js` — segue cadeias de embeds até ao m3u8
+- `subtitles_os.js` — legendas externas (OpenSubtitles) filtradas pelo release
+- `diag_os.js` — testa a procura de legendas por nome de release
 
 ## Fluxo do Scraper (ordem de tentativas em `fetchVideoSource`)
 1. **datacenter_scraper** (VixSrc, Vidlink — só axios) — devolve **todas** as
@@ -176,9 +178,35 @@ a tocar, pelo que servia sempre as legendas da primeira fonte que as tivesse
 (na prática, as do VixSrc por cima do vídeo do VidSrc → fora de sincronia).
 Por isso `resources` declara só `['stream']`.
 
-Consequência: uma fonte sem legendas próprias fica **sem legendas**, em vez de
-herdar as de outra. É o comportamento correcto — legendas erradas são piores
-que nenhumas.
+Uma fonte sem legendas próprias nunca herda as de outra. Em vez disso vai
+buscá-las ao OpenSubtitles, **filtradas pelo nome do release** (ver abaixo).
+
+### Legendas externas por nome de release (`subtitles_os.js`)
+O VidSrc não traz legendas nenhumas. Um addon de legendas genérico serve a
+primeira que encontra para o episódio, que quase nunca corresponde ao encode a
+tocar — foi essa a origem da dessincronização reportada.
+
+`subtitles_os.js` usa a API pública `rest.opensubtitles.org` (sem chave) e
+pontua cada candidata por **semelhança de tokens com o release** que estamos a
+servir (`releaseName`, vindo do `file_name` do `metaApi` do VidSrc: ex.
+`Chicago.Med.S01E01.1080p.WEB-DL.DD+5.1.H.264-SbR`). Tokens partilhados por
+todas as versões (S01E01, ano, artigos) são ignorados — o que pontua é o que
+distingue versões: grupo, fonte, resolução, codec.
+
+A percentagem aparece no nome da faixa no Stremio (`en · OpenSubtitles 100%`),
+para se saber à partida quais têm hipótese de estar em sincronia. Empates
+desempatam por número de downloads.
+
+Onde é chamado: `addExternalSubtitles` em `scraper.js`, **só** para streams com
+`subtitles` vazio. Todas as falhas são engolidas — legendas são um extra e
+nunca podem impedir o stream de ser devolvido. Desliga-se com
+`OPENSUBTITLES=off`.
+
+O proxy `/sub` descomprime o `.gz` do OpenSubtitles (`zlib.gunzipSync`, com
+`decompress: false` no axios para ele não expandir antes e verificação da
+assinatura `1f 8b` para o caso de vir já descomprimido).
+
+Diagnóstico: `node diag_os.js tt4655480 series 1 2 "<nome.do.release>"`.
 
 - **Captura na fonte**:
   - `vidsrc_resolver.js` — `default_subs` do `metaApi` (`data.vidsrcme.ru`)
@@ -212,6 +240,11 @@ que nenhumas.
 | `VIDSRC_CONCURRENCY` | `2` (resoluções por browser em paralelo) |
 | `VIDSRC_NAV_TIMEOUT_MS` | `30000` |
 | `VIDSRC_IDLE_CLOSE_MS` | `300000` (fecha o browser após inatividade) |
+| `OPENSUBTITLES` | ligado; `off` desliga as legendas externas |
+| `OPENSUBTITLES_LANGS` | `eng,por` (ISO 639-2, por ordem de preferência) |
+| `OPENSUBTITLES_MAX` | `2` (candidatas por idioma) |
+| `OPENSUBTITLES_UA` | `TemporaryUserAgent` |
+| `OPENSUBTITLES_TIMEOUT_MS` | `8000` |
 | `HEALTH_CHECK_INTERVAL_MS` | `300000` (5min) |
 | `ALERT_WEBHOOK` | — (Slack/Discord) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — (alertas Telegram) |

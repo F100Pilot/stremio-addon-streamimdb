@@ -149,6 +149,7 @@ async function resolvePlayerUrl(imdbId, type, season, episode) {
   // correspondem a ESTE encode — usar as de outra fonte dessincroniza, porque
   // são releases diferentes.
   let subtitles = [];
+  let releaseName = null;
   if (cfg.metaApi) {
     try {
       const meta = await get(cfg.metaApi, step3);
@@ -156,11 +157,14 @@ async function resolvePlayerUrl(imdbId, type, season, episode) {
       subtitles = (data?.default_subs || [])
         .map(s => ({ url: s.url || s.file || s.src, lang: s.lang || s.language || s.label || null }))
         .filter(s => s.url);
-      console.log(`[vidsrc] ${subtitles.length} legenda(s) próprias`);
+      // O nome do ficheiro identifica o release (ex.: "...1080p.WEB-DL...-SbR").
+      // É a chave para encontrar legendas externas em sincronia com ESTE encode.
+      releaseName = data?.data?.file_name || data?.file_name || null;
+      console.log(`[vidsrc] ${subtitles.length} legenda(s) próprias${releaseName ? ` · release: ${releaseName.split('/').pop()}` : ''}`);
     } catch (e) { console.log(`[vidsrc] metaApi falhou: ${e.message}`); }
   }
 
-  return { url: new URL(cfg.playerUrl, step3).href, referer: step3, subtitles };
+  return { url: new URL(cfg.playerUrl, step3).href, referer: step3, subtitles, releaseName };
 }
 
 async function resolveVidsrc(imdbId, type, season, episode) {
@@ -245,6 +249,7 @@ async function resolveVidsrc(imdbId, type, season, episode) {
       referer: hit.referer || 'https://cloudorchestranova.com/',
       source: 'VidSrc',
       subtitles: player.subtitles || [],
+      releaseName: player.releaseName || null,
     }];
   } catch (e) {
     console.log(`[vidsrc] erro: ${e.message}`);

@@ -14,6 +14,7 @@ const compression = require('compression');
 const axios   = require('axios');
 const http    = require('http');
 const https   = require('https');
+const zlib    = require('zlib');
 const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 const { getStatus, fetchVideoSource, invalidateCache, cacheKey, getMfCache } = require('./scraper');
@@ -611,21 +612,39 @@ app.all('/sub/:encoded.vtt', async (req, res) => {
   if (!data?.u) return res.status(400).send('Bad request');
   const referer = data.r || '';
 
+  // O OpenSubtitles serve as legendas comprimidas (.gz). Nesse caso é preciso
+  // pedir bytes crus e descomprimir — em modo 'text' o axios devolveria lixo
+  // binário. Por isso a escolha do responseType depende do URL.
+  const isGz = /\.gz(\?|$)/i.test(data.u) || /download\/(sub|file)/i.test(data.u);
+
   try {
     const upstream = await axios.get(data.u, {
       headers: {
         'User-Agent': PROXY_UA,
         ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
       },
-      timeout: 15000, responseType: 'text', maxRedirects: 5,
+      timeout: 15000, responseType: isGz ? 'arraybuffer' : 'text', maxRedirects: 5,
       httpAgent, httpsAgent, validateStatus: s => s < 500,
+      // Sem isto o axios auto-descomprime pelo Content-Encoding e o gunzip
+      // manual abaixo receberia dados já expandidos.
+      ...(isGz ? { decompress: false } : {}),
     });
     if (upstream.status !== 200) {
       console.log(`[proxy/sub] upstream ${upstream.status} para ${data.u.substring(0, 90)}`);
       return res.status(upstream.status).send('Subtitle error');
     }
 
-    let txt = typeof upstream.data === 'string' ? upstream.data : '';
+    let txt;
+    if (isGz) {
+      const buf = Buffer.from(upstream.data);
+      // Assinatura gzip (1f 8b): há servidores que já entregam descomprimido,
+      // e aí o gunzip rebentaria.
+      const gz = buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+      txt = (gz ? zlib.gunzipSync(buf) : buf).toString('utf8');
+      console.log(`[proxy/sub] ${gz ? 'gunzip' : 'sem compressão'} → ${txt.length}b`);
+    } else {
+      txt = typeof upstream.data === 'string' ? upstream.data : '';
+    }
     let srcUrl = data.u;
 
     // As faixas SUBTITLES do HLS (ex.: VixSrc) são playlists m3u8 que apontam

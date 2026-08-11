@@ -91,10 +91,16 @@ builder.defineStreamHandler(async (args) => {
         const seen = new Set();
         const subtitles = (s.subtitles || []).map((t, i) => {
           const lang = t.lang || 'und';
-          let id = `${lang}-${i}`;
+          // O `id` é o que o Stremio mostra na lista de legendas. Nas externas
+          // inclui a % de correspondência ao release, para se perceber à
+          // partida quais têm hipótese de estar em sincronia.
+          let id = t.name ? `${lang} · ${t.name}` : `${lang}-${i}`;
           while (seen.has(id)) id = `${id}_`;
           seen.add(id);
-          return { id, lang, url: makeSubProxyUrl(t.url, t.referer || s.referer || referer) };
+          // As legendas externas não precisam (nem devem levar) o referer da
+          // CDN de vídeo — vêm de outro sítio.
+          const ref = t.name ? null : (t.referer || s.referer || referer);
+          return { id, lang, url: makeSubProxyUrl(t.url, ref) };
         });
 
         return {

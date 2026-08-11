@@ -4,6 +4,7 @@ const { fetchFromProviders, convertImdbToTmdb } = require('./providers');
 const { fetchFromAltSources } = require('./alt_scraper');
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
 const { resolveVidsrc } = require('./vidsrc_resolver');
+const { fetchSubtitlesForRelease } = require('./subtitles_os');
 
 const AUDIO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
@@ -108,6 +109,30 @@ async function annotateStreams(streams, originalLanguage = null) {
     s.audioLangs?.includes('en') || s.audioInferred || s.audioUnknown || !s.audioLangs?.length);
 }
 
+// Acrescenta legendas externas aos streams que não têm nenhumas.
+//
+// Deliberadamente conservador: quem já traz legendas (VixSrc, do próprio
+// manifesto) fica intacto, porque essas estão garantidamente em sincronia.
+// Qualquer falha aqui é engolida — legendas são um extra, não podem impedir
+// o stream de ser devolvido.
+async function addExternalSubtitles(streams, imdbId, type, season, episode) {
+  const semLegendas = streams.filter(s => !s.subtitles || !s.subtitles.length);
+  if (!semLegendas.length) return;
+
+  for (const s of semLegendas) {
+    try {
+      const subs = await fetchSubtitlesForRelease(imdbId, type, season, episode, s.releaseName);
+      if (subs.length) {
+        s.subtitles = subs;
+        s.subsExternal = true; // usado no título para assinalar a origem
+        console.log(`[scraper] ${subs.length} legenda(s) externa(s) para ${s.source || '?'}`);
+      }
+    } catch (e) {
+      console.log(`[scraper] legendas externas falharam (${s.source || '?'}): ${e.message}`);
+    }
+  }
+}
+
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000;
 const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 8;
 
@@ -198,7 +223,14 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       } catch (e) { console.log('[scraper] VidSrc falhou:', e.message); }
     }
 
-    if (dcStreams && dcStreams.length) { setCached(key, dcStreams); return dcStreams; }
+    // 1c. Legendas externas, só para os streams que NÃO trazem as suas.
+    // Fontes com legendas próprias (VixSrc) não são tocadas — as delas vêm do
+    // manifesto e estão garantidamente em sincronia.
+    if (dcStreams && dcStreams.length) {
+      await addExternalSubtitles(dcStreams, imdbId, type, season, episode);
+      setCached(key, dcStreams);
+      return dcStreams;
+    }
 
     // 2. alt_scraper (axios rápido — falha no Turnstile mas tenta na mesma)
     try {
