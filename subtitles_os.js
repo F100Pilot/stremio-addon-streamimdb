@@ -54,6 +54,20 @@ function score(candidate, target) {
   return common / b.length;
 }
 
+// Tipo de fonte do release (WEB-DL, BluRay, HDTV, ...). Duas legendas de
+// grupos diferentes mas da mesma fonte costumam sincronizar; de fontes
+// diferentes, raramente.
+const SOURCE_TAGS = [
+  [/web[-.\s]?dl/i, 'WEB-DL'], [/web[-.\s]?rip/i, 'WEBRip'], [/\bwebs?\b/i, 'WEB'],
+  [/blu[-.\s]?ray|\bbdrip\b|\bbrrip\b/i, 'BluRay'], [/\bhdtv\b/i, 'HDTV'],
+  [/\bdvdrip\b/i, 'DVDRip'], [/\bxvid\b/i, 'XviD'],
+];
+function sourceTag(r) {
+  const hay = `${r.MovieReleaseName || ''} ${r.SubFileName || ''}`;
+  for (const [re, label] of SOURCE_TAGS) if (re.test(hay)) return label;
+  return null;
+}
+
 async function searchLang(imdbId, type, season, episode, lang) {
   // O endpoint quer o id sem o "tt".
   const id = String(imdbId).replace(/^tt/, '');
@@ -110,7 +124,11 @@ async function fetchSubtitlesForRelease(imdbId, type, season, episode, releaseNa
           lang: iso1,
           // A percentagem é honesta sobre o quão certa é a correspondência:
           // 100% = mesmo release, valores baixos = palpite.
-          name: `OpenSubtitles ${Math.round(match * 100)}%`,
+          // Além da %, o tipo de fonte. É o que mais decide a sincronia: dois
+          // WEB-DL da mesma emissão batem certo mesmo sendo de grupos
+          // diferentes (75%), enquanto um HDTV nunca bate. No Stremio não se
+          // vê o nome do release, por isso vai aqui.
+          name: `OpenSubtitles ${Math.round(match * 100)}%${sourceTag(r) ? ` · ${sourceTag(r)}` : ''}`,
           matchScore: match,
           release: r.MovieReleaseName || r.SubFileName || null,
         });
