@@ -15,6 +15,7 @@
 //      node diag_entrega.js tt4655480 series 1 1
 require('dotenv').config();
 const axios = require('axios');
+const { verify } = require('./proxy_token');
 
 const [, , imdbId = 'tt0076759', type = 'movie', season = null, episode = null] = process.argv;
 
@@ -104,7 +105,36 @@ async function cronometrar(url, etiqueta) {
   const segLocal = PUBLIC ? seg.replace(PUBLIC, LOCAL) : seg;
   console.log(`segmento: ...${seg.slice(-50)}\n`);
 
-  console.log('Mesmo segmento, dois caminhos:');
+  // Controlo: a ligação de casa está boa? Sem este número não dá para saber
+  // se 0.2 Mbps é a CDN a estrangular-nos ou a linha que está em baixo.
+  console.log('Controlo — ligação de casa (download de um host rápido):');
+  await cronometrar('https://speed.cloudflare.com/__down?bytes=10000000', 'cloudflare speedtest');
+
+  // A CDN directamente, sem o nosso proxy pelo meio. O token é nosso, por isso
+  // dá para o abrir e chegar ao URL verdadeiro.
+  console.log('\nA CDN, sem o nosso proxy:');
+  const tok = seg.split('/seg/')[1]?.replace(/\.ts$/, '');
+  const dados = tok ? verify(tok) : null;
+  if (dados?.u) {
+    const t0 = Date.now();
+    let bytes = 0;
+    try {
+      const res = await axios.get(dados.u, {
+        headers: { 'User-Agent': 'Mozilla/5.0', ...(dados.r ? { Referer: dados.r } : {}) },
+        timeout: 60000, responseType: 'stream', maxRedirects: 5, validateStatus: () => true,
+      });
+      await new Promise((ok, no) => {
+        res.data.on('data', c => { bytes += c.length; });
+        res.data.on('end', ok); res.data.on('error', no);
+      });
+      const sec = (Date.now() - t0) / 1000;
+      console.log(`  ${'CDN directa'.padEnd(28)} ${(bytes / 1e6).toFixed(2)} MB em ${sec.toFixed(2)}s = ${((bytes * 8) / sec / 1e6).toFixed(1)} Mbps`);
+    } catch (e) { console.log(`  CDN directa                  ✗ ${e.message}`); }
+  } else {
+    console.log('  (não foi possível abrir o token do segmento)');
+  }
+
+  console.log('\nMesmo segmento, pelo nosso proxy:');
   const l = await cronometrar(segLocal, 'localhost (sem túnel)');
   if (!PUBLIC) {
     console.log('\n(SERVER_URL não definido no .env — não dá para testar o caminho público)');
@@ -115,14 +145,22 @@ async function cronometrar(url, etiqueta) {
   if (l && p) {
     const racio = l.mbps / p.mbps;
     console.log('');
-    if (racio > 2) {
-      console.log(`→ o túnel corta o débito para 1/${racio.toFixed(1)}. É AÍ que se perde.`);
-      console.log('  Nada no addon corrige isto: é o upload de casa + Cloudflare.');
-    } else if (l.mbps < 4) {
-      console.log('→ lento nos DOIS caminhos: o estrangulamento está entre o servidor e a CDN.');
+    // O valor ABSOLUTO manda. De nada serve o túnel estar bom se já chega
+    // pouco ao servidor — foi o erro de leitura da 1.ª versão deste script.
+    if (l.mbps < 3) {
+      console.log(`→ já em localhost são só ${l.mbps.toFixed(1)} Mbps. O gargalo está ANTES do túnel:`);
+      console.log('  entre o servidor e a CDN. Compara com as duas medições acima —');
+      console.log('  se a ligação de casa estiver boa e a CDN directa também for lenta,');
+      console.log('  é a CDN a estrangular; se a própria ligação estiver má, é a linha.');
+      if (racio > 2) console.log(`  (o túnel ainda corta mais ${racio.toFixed(1)}x por cima disto)`);
+    } else if (racio > 2) {
+      console.log(`→ chega bem ao servidor, mas o túnel corta para 1/${racio.toFixed(1)}.`);
+      console.log('  É o upload de casa + Cloudflare. Nada no addon corrige isto.');
     } else {
       console.log('→ os dois caminhos entregam bem. Os engasgos não vêm daqui.');
     }
+    const precisa = 1.8; // variante 720p da VixSrc
+    console.log(`\n  (a variante 720p precisa de ~${precisa} Mbps sustidos)`);
   }
   process.exit(0);
 })();
