@@ -76,6 +76,21 @@ A VixSrc é uma fonte **italiana**. Duas coisas distintas:
    VixSrc só tem ita/ger. Nenhuma reescrita resolve isto; é preciso outra
    fonte. É para isto que existe o `browser_resolver`.
 
+### Qualidade: 720p é o tecto da VixSrc (investigado, fechado)
+Medido em Out/2026 com `diag_quality.js` e `diag_vixsrc_params.js`, em dois
+títulos muito diferentes (Chicago Med S1E1 e Star Wars). A VixSrc anuncia
+sempre **só** `1280x720` (~1.8-2.1 Mbps) e `854x480`. Não há 1080p para o
+player escolher — o 720p não é adaptação por falta de banda.
+
+Testaram-se seis combinações de parâmetros no URL do master. Resultado:
+- **`h=1` é obrigatório** — sem ele a CDN devolve **403**. É parte da
+  assinatura do pedido, *não* um selector de qualidade (era a suspeita).
+- `b=1` (que já vem no playlist base) não acrescenta nada.
+- Todas as combinações que respondem 200 dão exactamente as mesmas variantes.
+
+Conclusão: nenhuma alteração do nosso lado melhora a resolução desta fonte.
+Não repetir esta investigação.
+
 ### Porquê browser (e porquê não era viável no streamimdb.me)
 Cadeia: `vidsrc.in/embed` → `vsembed.ru` → `cloudorchestranova.com/embed/player`.
 Todos os passos respondem a axios; o que **não** dá para replicar é o último —
