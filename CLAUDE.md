@@ -143,6 +143,25 @@ em `sources`.
   — compatível com a fonte antiga (brightpathsignals) e a nova (cloudorchestranova)
 - Reescreve variantes/segmentos para passarem por `/hls` e `/seg`
 
+### Nunca comprimir o `/seg`
+O `compression()` é montado com um filtro que exclui a rota `/seg`. Não é
+micro-optimização: os segmentos da VixSrc têm extensão **`.html`** (disfarce)
+e vêm servidos como `text/html`, que o filtro por omissão do middleware
+considera compressível. Resultado antes do fix: cada segmento de vídeo passava
+por gzip — CPU queimada à toa, latência acrescentada por segmento (o
+middleware processa antes de enviar) e o `Content-Length` substituído por
+chunked encoding, o que estraga a estimativa de débito do player e atrapalha
+os pedidos `Range`. Sintoma: vídeo a parar para carregar mesmo com débito
+de sobra para a variante.
+
+Os manifestos (`/hls`), as legendas (`/sub`) e a landing page continuam
+comprimidos — aí o ganho é real.
+
+Verificar que está bem (não deve aparecer `content-encoding: gzip`):
+```
+curl -sI "<URL /seg de um stream resolvido>" | grep -i "content-encoding\|content-type\|content-length"
+```
+
 ### `proxyable: true` vs `false` — depende de QUEM tem o IP "bom"
 A decisão não é fixa: depende de qual lado da ligação (servidor ou cliente Stremio)
 tem o IP "bom" para a CDN da fonte (residencial vs. datacenter):

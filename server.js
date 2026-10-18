@@ -36,8 +36,20 @@ const SERVER_BASE = (
 
 const app = express();
 
-// Enable gzip compression for faster manifest delivery
-app.use(compression());
+// Gzip só para texto (manifestos .m3u8, legendas .vtt, landing page).
+//
+// O /seg NUNCA passa por aqui. Serve segmentos de vídeo, que já são
+// comprimidos — gzipá-los não encolhe nada, queima CPU a cada segmento,
+// atrasa a entrega (o middleware processa antes de enviar) e troca o
+// Content-Length por chunked encoding, o que estraga a estimativa de débito
+// do player e atrapalha os pedidos Range.
+//
+// Não bastava confiar no filtro por content-type: a VixSrc disfarça os
+// segmentos com extensão .html e serve-os como text/html, que o filtro
+// por omissão considera compressível. Daí a exclusão ser pela rota.
+app.use(compression({
+  filter: (req, res) => !req.path.startsWith('/seg') && compression.filter(req, res),
+}));
 
 app.use(getRouter(addonInterface));
 
