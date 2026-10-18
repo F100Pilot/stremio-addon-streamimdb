@@ -134,6 +134,43 @@ function activeProviders() {
   return want.map(n => PROVIDERS.find(p => p.name === n)).filter(Boolean);
 }
 
+// ── Pré-verificação de DNS ───────────────────────────────────────────────────
+// Lançar o Chromium custa segundos. Não vale a pena pagá-los para descobrir
+// que o domínio da fonte nem sequer resolve — foi o que passou a acontecer
+// quando o vidsrc.in desapareceu: o browser arrancava em todos os títulos sem
+// áudio inglês só para falhar logo com ENOTFOUND.
+//
+// Uma resolução de DNS custa milissegundos e o resultado fica em cache, por
+// isto não acrescenta latência percetível ao caminho normal.
+const dns = require('dns').promises;
+const DNS_TTL = parseInt(process.env.BROWSER_DNS_TTL_MS) || 5 * 60 * 1000;
+const dnsCache = new Map(); // hostname → { ok, ts }
+
+async function resolveOk(hostname) {
+  const hit = dnsCache.get(hostname);
+  if (hit && Date.now() - hit.ts < DNS_TTL) return hit.ok;
+  let ok = true;
+  try {
+    await dns.lookup(hostname);
+  } catch (e) {
+    ok = false;
+    console.log(`[browser] ${hostname} não resolve (${e.code || e.message}) — a saltar sem lançar o browser`);
+  }
+  dnsCache.set(hostname, { ok, ts: Date.now() });
+  return ok;
+}
+
+// Deixa passar só as fontes cujo domínio resolve.
+async function reachableProviders(providers, ids) {
+  const out = [];
+  for (const p of providers) {
+    let host;
+    try { host = new URL(p.url(ids)).hostname; } catch { out.push(p); continue; }
+    if (await resolveOk(host)) out.push(p);
+  }
+  return out;
+}
+
 // ── Circuit breaker ──────────────────────────────────────────────────────────
 // Depois de N falhas seguidas, pára de lançar o browser durante um tempo. Sem
 // isto, um título indisponível faz-nos martelar todas as fontes de cada vez que
@@ -393,6 +430,14 @@ async function resolveWithBrowser(imdbId, type, season, episode) {
   }
   const ids = { imdbId, tmdbId, type, season, episode };
 
+  // Poda as fontes cujo domínio morreu, antes de pagar o arranque do Chromium.
+  const vivas = await reachableProviders(providers, ids);
+  if (!vivas.length) {
+    console.log('[browser] nenhuma fonte com DNS a resolver — não vale a pena lançar o browser');
+    recordFailure();
+    return null;
+  }
+
   await acquire();
   activePages++;
   try {
@@ -407,7 +452,7 @@ async function resolveWithBrowser(imdbId, type, season, episode) {
       return null;
     }
 
-    for (const provider of providers) {
+    for (const provider of vivas) {
       if (provider.id === 'tmdb' && !tmdbId) continue;
       try {
         const streams = await tryProvider(browser, provider, ids);

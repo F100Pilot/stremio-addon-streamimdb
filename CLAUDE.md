@@ -143,6 +143,16 @@ em `sources`.
   — compatível com a fonte antiga (brightpathsignals) e a nova (cloudorchestranova)
 - Reescreve variantes/segmentos para passarem por `/hls` e `/seg`
 
+### Não lançar o Chromium para fontes mortas
+Antes de arrancar o browser, `reachableProviders` faz `dns.lookup` ao domínio
+de cada fonte activa e poda as que não resolvem (cache de `BROWSER_DNS_TTL_MS`,
+5 min). Custa dezenas de milissegundos; o arranque do Chromium custa segundos.
+
+Motivo concreto: quando o `vidsrc.in` desapareceu (`ENOTFOUND`, Out/2026), o
+resolver lançava o Chromium em **todos** os títulos sem áudio inglês — que na
+VixSrc são a maioria — só para falhar logo a seguir no DNS. Era o grosso da
+demora na primeira reprodução de cada título.
+
 ### Nunca comprimir o `/seg`
 O `compression()` é montado com um filtro que exclui a rota `/seg`. Não é
 micro-optimização: os segmentos da VixSrc têm extensão **`.html`** (disfarce)
