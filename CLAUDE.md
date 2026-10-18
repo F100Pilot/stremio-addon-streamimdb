@@ -31,6 +31,7 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
 - `subtitles_os.js` — legendas externas (OpenSubtitles) filtradas pelo release
 - `diag_os.js` — testa a procura de legendas por nome de release
 - `diag_quality.js` — porque é que fica em 720p: variantes anunciadas vs débito real
+- `diag_vixsrc_params.js` — o `h=1`/`b=1` do URL do master limitam a qualidade?
 
 ## Fluxo do Scraper (ordem de tentativas em `fetchVideoSource`)
 1. **datacenter_scraper** (VixSrc, Vidlink — só axios) — devolve **todas** as
