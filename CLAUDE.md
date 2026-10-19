@@ -1,4 +1,4 @@
-# StreamIMDb Connector v1.4.1
+# StreamIMDb Connector v1.5.0
 
 ## Comandos
 ```
@@ -144,8 +144,44 @@ Se alguma delas ressuscitar, o histórico tem o código: `git show <commit>^:alt
 
 ## Branches
 - `Server` — branch de produção do servidor caseiro (a que o Proxmox faz pull)
-- `main` / `Experimental` — histórico anterior (Render)
+- `main` — deploy do **Vercel** (serverless, IP de datacenter, sem Chromium)
+- `Experimental` — histórico anterior (Render)
 - `backup/working-v1` — backup estável com Puppeteer (versão antiga)
+
+### `main` vs `Server` — porque são diferentes e o que NÃO se porta
+A `main` não é uma cópia da `Server`, e **não se deve fazer merge da `Server`
+para a `main`**: apagaria o que é específico do Vercel (`api/index.js`,
+`vercel.json`, `upstream_relay.js`) e traria código que não corre aqui.
+
+Como a `main` apanha as funcionalidades da `Server`: **pelo relay**. O Vercel pede
+os streams ao servidor de casa (`UPSTREAM_URL`) e entrega-os directos ao cliente
+(`proxyable:false`). Esses streams já trazem as etiquetas do servidor (fonte,
+áudio, aviso de lentidão) no título e as legendas com URL absoluto para o `/sub`
+**dele**. A `main` só tem de as deixar passar — por isso o `upstream_relay.js`
+reencaminha o campo `subtitles` e o `addon.js` emite-o no stream, sem as
+re-proxiar nem duplicar a lógica.
+
+**Não portado, de propósito** (não faria nada de útil no Vercel):
+- `stream_probe.js` — mede CDN → servidor; aqui o vídeo não passa pelo servidor.
+- `subtitles_os.js` e a rota `/sub` com descodificação Latin-1 — as legendas
+  chegam já tratadas pelo servidor de casa.
+- `deploy/` (auto-deploy por PM2) — o Vercel faz o seu próprio deploy.
+- Health check por título e a verificação da cadeia `vidsrc.in` — da `Server`.
+- Anotação de áudio/qualidade (`annotateStreams`) — as fontes de datacenter
+  (Vidlink) quase não têm o que anotar, e a VixSrc dá 403.
+
+Portado: versão, a exclusão do `/seg` do gzip (os segmentos da VixSrc têm
+extensão `.html` e a biblioteca comprimia-os), e a passagem das legendas no relay.
+
+**Os manifestos `/hls` nunca foram comprimidos** (a biblioteca não considera
+`application/x-mpegURL` comprimível, nem antes nem depois do filtro); o filtro
+só tem efeito no `/seg`, que vem como `text/html`. (Verificado com a biblioteca
+real, com um controlo sem o filtro.)
+
+**Atenção ao reutilizar a lista de ficheiros do git:** o `node_modules`
+versionado aqui é um resumo **antigo e parcial** (224 pacotes; falta `dotenv`,
+`compression`, `nodemailer`). Não corresponde ao `package.json` e nunca serviu
+para correr a app — o Vercel instala as dependências por si.
 
 ## Notas
 - **As CDNs bloqueiam IPs de datacenter.** A VixSrc devolve 403 logo na API a

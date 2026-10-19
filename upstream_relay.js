@@ -28,9 +28,17 @@ async function fetchFromUpstream(imdbId, type, season, episode) {
     return usable.map(s => ({
       url: s.url,
       // O título do upstream já traz "SxEy · " — o nosso addon.js volta a
-      // prefixá-lo, por isso retira-se aqui para não duplicar.
+      // prefixá-lo, por isso retira-se aqui para não duplicar. Já traz também as
+      // etiquetas de fonte, áudio e velocidade que o servidor de casa calculou.
       quality: (s.title || 'Auto').replace(/^S\d+E\d+ · /, ''),
       proxyable: false, // URL absoluto do proxy do upstream — directo ao cliente
+      // Legendas do upstream: já são URLs absolutos do /sub DELE (com a
+      // codificação e a ligação ao stream certos), por isso passam tal e qual,
+      // sem voltar a proxiar aqui. Só as bem formadas — um item mau não pode
+      // estragar o stream.
+      subtitles: (Array.isArray(s.subtitles) ? s.subtitles : [])
+        .filter(t => t && typeof t.url === 'string' && /^https?:\/\//.test(t.url) && t.lang)
+        .map(t => ({ id: t.id || t.lang, lang: t.lang, url: t.url })),
     }));
   } catch (e) {
     console.log('[upstream] erro:', e.message);

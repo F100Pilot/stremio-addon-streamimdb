@@ -45,8 +45,14 @@ if (process.env.VERCEL) {
 
 const app = express();
 
-// Enable gzip compression for faster manifest delivery
-app.use(compression());
+// Gzip só para texto (manifestos, legendas, landing page). O /seg nunca: serve
+// segmentos de vídeo, que já são comprimidos — gzipá-los queima CPU, atrasa a
+// entrega e troca o Content-Length por chunked, estragando a estimativa de
+// débito do player. A VixSrc serve-os como text/html (extensão .html), que o
+// filtro por omissão do middleware considera compressível; daí excluir a rota.
+app.use(compression({
+  filter: (req, res) => !req.path.startsWith('/seg') && compression.filter(req, res),
+}));
 
 app.use(getRouter(addonInterface));
 
@@ -122,7 +128,7 @@ app.get('/', (req, res) => {
     </div>
     <img class="logo" src="https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png" alt="icon">
     <h1>StreamIMDb Connector</h1>
-    <div class="version">v1.4.1 &nbsp;·&nbsp; Movies &amp; Series</div>
+    <div class="version">v1.5.0 &nbsp;·&nbsp; Movies &amp; Series</div>
     <p>Stream movies and series natively inside Stremio — no browser required.</p>
     <a class="btn btn-install" id="install-btn" href="#">&#9654; Install in Stremio</a>
     <a class="btn btn-donate" href="https://paypal.me/F100Pilot" target="_blank">&#9829; Donate via PayPal</a>
@@ -162,7 +168,7 @@ app.get('/', (req, res) => {
 });
 
 // ── Version check ───────────────────────────────────────────────────────────
-const CURRENT_VERSION = '1.4.1';
+const CURRENT_VERSION = '1.5.0';
 const GH_RELEASES_URL = 'https://api.github.com/repos/F100Pilot/stremio-addon-streamimdb/releases/latest';
 let _versionCache = null;
 let _versionCacheTs = 0;
@@ -195,7 +201,7 @@ app.get('/health', (req, res) => {
   const mem = process.memoryUsage();
   res.json({
     status: 'ok',
-    version: '1.4.1',
+    version: '1.5.0',
     uptimeSeconds: Math.floor((Date.now() - START_TIME) / 1000),
     scraper: getStatus(),
     health: getHealthStatus(),

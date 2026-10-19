@@ -14,7 +14,7 @@ const SERVER_BASE = (
 
 const manifest = {
   id: 'org.local.streamimdb',
-  version: '1.4.1',
+  version: '1.5.0',
   name: 'StreamIMDb Connector',
   description: 'Stream movies and series via streamimdb.me natively inside Stremio.',
   logo: 'https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png',
@@ -66,10 +66,15 @@ builder.defineStreamHandler(async (args) => {
         const streamUrl = s.proxyable === false
           ? s.url
           : makeHlsProxyUrl(s.url, s.referer || referer, meta);
+        // Legendas ligadas a ESTE stream (nunca ao recurso global `subtitles`:
+        // cada fonte é um encode diferente e as legendas de uma não sincronizam
+        // com a outra). Aqui só chegam as do relay, com URL absoluto.
+        const subtitles = Array.isArray(s.subtitles) ? s.subtitles : [];
         return {
           url:   streamUrl,
           name:  'StreamIMDb',
           title: type === 'series' ? `S${season}E${episode} · ${s.quality}` : s.quality,
+          ...(subtitles.length ? { subtitles } : {}),
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         };
       });
