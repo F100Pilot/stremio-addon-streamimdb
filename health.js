@@ -295,4 +295,4 @@ function startHealthChecks() {
   return id;
 }
 
-module.exports = { startHealthChecks, getHealthStatus, healthCheck };
+module.exports = { startHealthChecks, getHealthStatus, healthCheck, sendAlert };

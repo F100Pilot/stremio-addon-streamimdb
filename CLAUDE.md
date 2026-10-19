@@ -35,6 +35,9 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
 - `diag_entrega.js` — o mesmo segmento por localhost vs túnel: onde se perde o débito
 - `stream_probe.js` — mede o débito de cada stream por título e ordena em função disso
 - `diag_probe.js` — mostra as medições e a ordem final de UM título
+- `deploy/autodeploy.sh` — auto-deploy no Proxmox (ver secção "Auto-deploy")
+- `deploy/install-autodeploy.sh` — instala/remove o timer do systemd
+- `deploy/notify.js` — avisos de deploy pelos canais do `.env` (email/Telegram/webhook)
 
 ## Fluxo do Scraper (ordem de tentativas em `fetchVideoSource`)
 1. **datacenter_scraper** (VixSrc, Vidlink — só axios) — devolve **todas** as
@@ -137,6 +140,59 @@ Três estados, com alerta na transição (nunca repetido de 5 em 5 minutos):
 `ok` (as duas vivas) · `degradado` (uma viva — ainda serve, mas sem
 redundância) · `down` (nenhuma). O `/health` expõe o detalhe por fonte
 em `sources`.
+
+## Auto-deploy (servidor caseiro)
+De 5 em 5 minutos o **servidor** vai buscar a `origin/Server`; se há commits
+novos, actualiza, reinicia o PM2 e confirma que arrancou. Não há porta aberta
+nem endpoint de deploy: é o servidor que puxa, não o GitHub que empurra.
+
+Instalar (uma vez, como root, no servidor):
+```
+cd /root/stremio-addon-streamimdb && git pull
+sudo bash deploy/install-autodeploy.sh
+```
+Ver / pausar / retomar / remover:
+```
+sudo bash deploy/install-autodeploy.sh --status
+touch /var/lib/stremio-autodeploy/PAUSE      # pausa (ou .no-autodeploy no repo)
+rm    /var/lib/stremio-autodeploy/PAUSE      # retoma
+sudo bash deploy/install-autodeploy.sh --uninstall
+```
+Logs: `journalctl -u stremio-autodeploy -n 50` (ou `/var/log/stremio-autodeploy.log` se for cron).
+
+**O que faz, por ordem, e quando recusa/reverte:**
+1. `git fetch`; sem rede ou sem commits novos → sai em silêncio.
+2. **Recusa e avisa (uma vez por commit)** se: o servidor não está na branch
+   certa · tem commits que o remoto não tem (divergiu) · tem alterações locais
+   não commitadas (um hotfix à mão — nunca as atropela). O `node_modules` fica
+   de fora desta verificação (está versionado e o `npm install` mexe-lhe).
+3. `git merge --ff-only` (só em linha recta, nunca decide um merge por ti).
+4. `node --check` a todos os `.js`. **Erro de sintaxe → rollback sem reiniciar**:
+   o serviço nem chega a cair.
+5. `npm install` só se o `package.json`/lock mudou.
+6. `pm2 restart --update-env` e espera até 45s que o `/health` responda.
+   **Não responde → `git reset --hard` ao commit anterior, reinicia e avisa.**
+7. Um commit que falhou **não é tentado outra vez** até chegar outro (senão
+   repetia-se de 5 em 5 minutos). Um commit partido bloqueia os seguintes até
+   ser corrigido — é o comportamento certo, não um bug.
+
+Avisos (sucesso, rollback, recusa) saem pelos canais do `.env` — email SMTP,
+Telegram, webhook — via `deploy/notify.js`.
+
+**Cuidados:**
+- **Cada push para a `Server` passa a ser produção em ≤5 min.** O rollback apanha
+  serviços que não arrancam, mas não regressões subtis (ex.: engasga só com
+  certos títulos). Para testar sem ir para produção, usa outra branch.
+- **Quem pode fazer push para a `Server` executa código como root no servidor.**
+  Convém ter a branch protegida e 2FA na conta do GitHub.
+- O `npm install` corre scripts de instalação das dependências (cadeia de
+  fornecimento); só corre quando o `package.json` muda.
+- O `/health` responder 200 não significa que as fontes estejam boas (pode estar
+  *degradado*). Só se verifica que o processo arrancou.
+- Testado num ambiente simulado (remoto local, `pm2`/`npm` falsos): commit
+  saudável, `package.json`, serviço doente, sintaxe partida, hotfix local,
+  divergência, pausa, `node_modules` sujo, duas execuções em simultâneo e sem
+  rede. **Não foi testado no Proxmox real**, nem o systemd/cron em si.
 
 ## Proxy HLS (`server.js`)
 - Stream `proxyable:true` → `addon.js` cria `/hls/{token}.m3u8` com `{u, r}` (r = referer da fonte)
