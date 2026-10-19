@@ -219,6 +219,12 @@ CDN que exige `Referer` (`requiresProxy`). `datacenter_scraper.js` escolhe a mel
 resolução e marca o stream com `kind:'file'`; `addon.js` manda-o pela rota
 `/file/{token}.mp4` (não `/hls`), que é a mesma rotina do `/seg` (`proxyMedia`)
 com Range/HEAD passados à CDN para o player poder saltar no tempo.
+**`requiresProxy:true`:** a CDN (`bcdn.hakunaymatata.com`) responde 429 a qualquer
+pedido directo, com qualquer cabeçalho — não é o IP. O leitor do site passa estes
+ficheiros pelo proxy do Vidlink; `vidlinkProxyUrl()` replica a função dele
+(`{VIDLINK_PROXY}/mp{path}?{sign,t,…}&headers={json}&host={origin}`, proxy por
+omissão `https://surge.flooderrr.store`). Se o leitor mudar de proxy, actualizar
+`VIDLINK_PROXY` (env) ou o default — ver `diag_vidlink_m.js`.
 `stream_probe.js` mede ficheiros pelo débito de um troço inicial contra o bitrate
 típico da resolução (estimativa, não tempo real).
 

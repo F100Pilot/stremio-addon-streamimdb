@@ -187,6 +187,26 @@ async function tryVixsrc(tmdbId, type, season, episode) {
 // ── Vidlink ────────────────────────────────────────────────────────────────
 const VIDLINK_REF = 'https://vidlink.pro';
 
+// Ficheiros marcados `requiresProxy:true`: o leitor do site NÃO os pede à CDN
+// (que responde 429 a quem vem de fora) — passa-os pelo proxy do Vidlink.
+// Réplica de `m(l, base, "mp", e => o.has(e))` do leitor (chunk 3922-*.js):
+//   {base}/mp{pathname}?{só auth/expires/hash/key/sign/t/token}&headers={json ordenado}&host={origin}
+// O proxy por omissão é o que o leitor usa; VIDLINK_PROXY permite trocá-lo.
+const VIDLINK_PROXY = (process.env.VIDLINK_PROXY || 'https://surge.flooderrr.store').replace(/\/+$/, '');
+const VIDLINK_KEEP = new Set(['auth', 'expires', 'hash', 'key', 'sign', 't', 'token']);
+function vidlinkProxyUrl(fileUrl, headers) {
+  let u;
+  try { u = new URL(fileUrl); } catch { return null; }
+  const key = kv => { const k = kv.split('=')[0]; try { return decodeURIComponent(k.replace(/\+/g, ' ')).toLowerCase(); } catch { return k.toLowerCase(); } };
+  const pairs = u.search.slice(1).split('&').filter(Boolean);
+  if (pairs.some(kv => ['headers', 'host'].includes(key(kv)))) return null;
+  const kept = pairs.filter(kv => VIDLINK_KEEP.has(key(kv)));
+  const h = headers && typeof headers === 'object' ? headers : {};
+  const hdrJson = JSON.stringify(Object.fromEntries(Object.entries(h).sort(([a], [b]) => a.localeCompare(b))));
+  const extra = [['headers', hdrJson], ['host', u.origin]].map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  return `${VIDLINK_PROXY}/mp${u.pathname}?${[kept.join('&'), extra].filter(Boolean).join('&')}`;
+}
+
 async function tryVidlink(tmdbId, type, season, episode) {
   try {
     // Passo 1: encriptar o TMDB id
@@ -214,7 +234,8 @@ async function tryVidlink(tmdbId, type, season, episode) {
     // passa pelo nosso proxy /file em vez do /hls.
     if (!playlist && stream && stream.qualities && typeof stream.qualities === 'object') {
       const opts = Object.entries(stream.qualities)
-        .map(([q, v]) => ({ q: parseInt(q, 10), url: v && v.url, headers: v && v.headers }))
+        .map(([q, v]) => ({ q: parseInt(q, 10),
+          url: v && v.url && (v.requiresProxy === true ? vidlinkProxyUrl(v.url, v.headers) : v.url) }))
         .filter(o => o.url && /^https?:/.test(o.url) && o.q > 0)
         .sort((a, b) => b.q - a.q);
       if (!opts.length) { console.log('[dc:vidlink] qualities sem URL utilizável'); return null; }
@@ -274,4 +295,4 @@ async function fetchFromDatacenterSources(imdbId, type, season, episode) {
   return streams;
 }
 
-module.exports = { fetchFromDatacenterSources };
+module.exports = { fetchFromDatacenterSources, vidlinkProxyUrl };
