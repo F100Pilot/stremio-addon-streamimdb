@@ -589,26 +589,40 @@ app.all('/seg/:encoded.ts', async (req, res) => {
           'User-Agent': PROXY_UA,
           ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
           ...(req.headers.range ? { Range: req.headers.range } : {}),
+          'Accept-Encoding': 'identity',   // vídeo não comprime; e evita o Content-Length errado abaixo
         },
-        timeout: 30000, responseType: 'stream', maxRedirects: 5,
+        timeout: 30000, responseType: 'stream', maxRedirects: 5, decompress: false,
         httpAgent, httpsAgent,
       });
       res.status(upstream.status);
       ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control'].forEach(h => {
         if (upstream.headers[h]) res.set(h, upstream.headers[h]);
       });
+      // Se a CDN comprimir mesmo assim, descomprime-se aqui e tira-se o
+      // Content-Length (é o do corpo COMPRIMIDO): com ele o player esperava
+      // bytes que nunca chegam e ficava a carregar para sempre.
+      let body = upstream.data;
+      const enc = String(upstream.headers['content-encoding'] || '').toLowerCase();
+      const unzip = enc.includes('br') ? zlib.createBrotliDecompress()
+                  : /gzip|deflate/.test(enc) ? zlib.createUnzip() : null;
+      if (unzip) { res.removeHeader('content-length'); body = upstream.data.pipe(unzip); }
       if (!upstream.headers['accept-ranges']) res.set('Accept-Ranges', 'bytes');
       res.set('Access-Control-Allow-Origin', '*');
 
       let closed = false;
-      req.on('close', () => { closed = true; upstream.data.destroy(); });
-      upstream.data.on('error', (e) => {
+      // Só a RESPOSTA diz se o cliente desligou: no Node >=16 o 'close' do req
+      // dispara assim que o pedido acaba de ser lido — destruía o download antes
+      // do 1.º byte e o player ficava pendurado.
+      res.on('close', () => { if (!res.writableFinished) { closed = true; upstream.data.destroy(); } });
+      const onErr = (e) => {
         if (closed) return;
         console.error('[proxy/seg] upstream stream error:', e.message);
         if (!res.headersSent) res.status(502).end();
         else res.end();
-      });
-      upstream.data.pipe(res);
+      };
+      upstream.data.on('error', onErr);
+      if (body !== upstream.data) body.on('error', onErr);
+      body.pipe(res);
       return; // success
     } catch (err) {
       const status = err.response?.status;
