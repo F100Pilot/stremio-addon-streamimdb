@@ -9,6 +9,7 @@
 // Ambas usam TMDB id, por isso convertemos IMDb → TMDB primeiro.
 const axios = require('axios');
 const { convertImdbToTmdb } = require('./tmdb');
+const cdnMap = require('./cdn_map');
 
 const TIMEOUT = 10000;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
@@ -143,6 +144,7 @@ async function tryVixsrc(tmdbId, type, season, episode) {
     });
     if (embed.status !== 200) { console.log('[dc:vixsrc] embed HTTP', embed.status); return null; }
     const html = typeof embed.data === 'string' ? embed.data : '';
+    cdnMap.learnFromHtml(html);   // domínio real dos segmentos (o playlist traz um isca)
 
     // Passo 3: extrair token, expires, playlist
     const token    = html.match(/token["']\s*:\s*["']([^"']+)/)?.[1];

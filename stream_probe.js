@@ -25,6 +25,7 @@
 // Tudo falha em silêncio: a medição é um extra e nunca pode impedir um stream
 // de ser devolvido.
 const axios = require('axios');
+const cdnMap = require('./cdn_map');
 
 const ENABLED     = process.env.STREAM_PROBE !== 'off';
 const SEGMENTS    = Math.max(1, parseInt(process.env.STREAM_PROBE_SEGMENTS, 10) || 3);
@@ -111,7 +112,7 @@ async function downloadSegment(seg, referer, deadline, expectedBytes) {
   const timer = setTimeout(() => ctl.abort(), remaining);
   let bytes = 0, total = null, done = false, status = 0, ttfb = null;
   try {
-    const res = await axios.get(seg.url, {
+    const res = await axios.get(await cdnMap.fixUrl(seg.url), {
       headers: headersFor(referer), responseType: 'stream', signal: ctl.signal,
       timeout: remaining, maxRedirects: 5, validateStatus: () => true,
     });

@@ -20,6 +20,7 @@ const addonInterface = require('./addon');
 const { getStatus, fetchVideoSource, invalidateCache, cacheKey, getMfCache } = require('./scraper');
 const { startHealthChecks, getHealthStatus } = require('./health');
 const { sign, verify } = require('./proxy_token');
+const cdnMap = require('./cdn_map');
 
 const httpAgent  = new http.Agent({  keepAlive: true, maxSockets: 64 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
@@ -527,7 +528,7 @@ app.all('/seg/:encoded.ts', async (req, res) => {
   console.log(`[proxy/seg] ⇢ ${req.method} ${data.u.substring(0, 80)}`);
 
   const MAX_SEG_RETRIES = parseInt(process.env.MAX_SEG_RETRIES) || 1;
-  let segmentUrl = data.u;
+  let segmentUrl = await cdnMap.fixUrl(data.u);   // troca o domínio-isca da VixSrc pelo real
   const referer  = data.r || '';
   const oldBase  = data.b || '';
 
