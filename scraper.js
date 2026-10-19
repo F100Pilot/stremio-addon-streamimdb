@@ -4,6 +4,7 @@ const { convertImdbToTmdb } = require('./tmdb');
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
 const { resolveWithBrowser } = require('./browser_resolver');
 const { fetchSubtitlesForRelease } = require('./subtitles_os');
+const { probeStreams, orderStreams, probeStats } = require('./stream_probe');
 
 const AUDIO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
@@ -132,6 +133,24 @@ async function addExternalSubtitles(streams, imdbId, type, season, episode) {
   }
 }
 
+// Quanto tempo, ao FIM da resolução, vale a pena esperar pelas medições de
+// débito. Elas começam logo que cada fonte resolve e correm em paralelo com o
+// resto (TMDB, browser, legendas), por isso normalmente já acabaram. Se não,
+// o stream sai sem medição e a medição termina em segundo plano: os objectos
+// são os mesmos que estão na cache, e os pedidos seguintes reordenam já com ela.
+// STREAM_PROBE_WAIT_MS=0 nunca espera (a 1.ª resposta sai sempre sem medição).
+const PROBE_WAIT_MS = Math.max(0, parseInt(process.env.STREAM_PROBE_WAIT_MS, 10) || 2000);
+
+async function waitProbes(probes) {
+  if (!probes.length) return;
+  let timer;
+  await Promise.race([
+    Promise.all(probes),
+    new Promise(r => { timer = setTimeout(r, PROBE_WAIT_MS); }),
+  ]);
+  clearTimeout(timer);
+}
+
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000;
 const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 8;
 
@@ -174,12 +193,12 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   const key = cacheKey(imdbId, type, season, episode);
 
   const cached = getCached(key);
-  if (cached) { console.log(`[cache] Hit: ${key}`); return { streams: cached, type: 'direct' }; }
+  if (cached) { console.log(`[cache] Hit: ${key}`); return { streams: orderStreams(cached), type: 'direct' }; }
 
   if (pending.has(key)) {
     console.log(`[cache] Dedup: aguardando fetch em curso para ${key}`);
     const streams = await pending.get(key);
-    return streams ? { streams, type: 'direct' } : null;
+    return streams ? { streams: orderStreams(streams), type: 'direct' } : null;
   }
 
   if (activeScrapes >= MAX_QUEUE) {
@@ -199,6 +218,12 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       dcStreams = await fetchFromDatacenterSources(imdbId, type, season, episode);
       if (dcStreams) console.log('[scraper] datacenter sources OK');
     } catch (e) { console.log('[scraper] datacenter sources falhou:', e.message); }
+
+    // Medição de débito por título. Arranca já, em paralelo com o que se segue
+    // (TMDB, browser, legendas) para não acrescentar latência à 1.ª reprodução.
+    const probeLabel = cacheKey(imdbId, type, season, episode);
+    const probes = [];
+    if (dcStreams && dcStreams.length) probes.push(probeStreams(dcStreams, probeLabel));
 
     // Idioma original do título — estimativa para os streams cujo áudio vem
     // multiplexado (ver `annotateStreams`). Falha em silêncio: sem isto os
@@ -220,6 +245,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       try {
         const vs = await resolveWithBrowser(imdbId, type, season, episode);
         if (vs) {
+          probes.push(probeStreams(vs, probeLabel)); // em paralelo com o resto
           await annotateStreams(vs, origLang); // idioma + qualidade também para estes
           dcStreams = [...(dcStreams || []), ...vs];
         }
@@ -231,6 +257,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     // manifesto e estão garantidamente em sincronia.
     if (dcStreams && dcStreams.length) {
       await addExternalSubtitles(dcStreams, imdbId, type, season, episode);
+      await waitProbes(probes);
       setCached(key, dcStreams);
       return dcStreams;
     }
@@ -247,7 +274,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
   pending.set(key, fetchPromise);
   const streams = await fetchPromise;
-  return streams ? { streams, type: 'direct' } : null;
+  return streams ? { streams: orderStreams(streams), type: 'direct' } : null;
 }
 
 function invalidateCache(imdbId, type, season, episode) {
@@ -267,6 +294,7 @@ function getStatus() {
     activeScrapes,
     maxQueue: MAX_QUEUE,
     cache: { size: cache.size, ttlSeconds: Math.floor(CACHE_TTL / 1000), entries },
+    probe: probeStats(),
   };
 }
 

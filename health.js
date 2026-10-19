@@ -1,5 +1,6 @@
 'use strict';
 const axios = require('axios');
+const { slowSources } = require('./stream_probe');
 let nodemailer;
 try { nodemailer = require('nodemailer'); } catch { nodemailer = null; }
 
@@ -113,15 +114,45 @@ async function testVidsrcChain() {
 // aí que interessa ser avisado, antes de ficar sem nada.
 async function testAPI() {
   const [vix, vid] = await Promise.all([testVixsrc(), testVidsrcChain()]);
-  lastDetail = { vixsrc: vix.message, 'vidsrc.in': vid.message };
+
+  // Medição por título (stream_probe.js): uma fonte pode RESPONDER e ainda assim
+  // entregar os segmentos mais devagar do que são consumidos — foi o que se viu
+  // com a VixSrc em Out/2026, com a API a dar 200 o tempo todo e o vídeo a
+  // parar. Só conta com amostras suficientes e recentes (ver MIN_SAMPLES).
+  const lentas = slowSources();
+  const lentasTxt = lentas
+    .map(x => `${x.source} a ${x.medianFactor}x tempo real (mediana de ${x.samples} títulos)`)
+    .join(', ');
+
+  lastDetail = {
+    vixsrc: vix.message, 'vidsrc.in': vid.message,
+    medido: lentas.length ? `lentas: ${lentasTxt}` : 'sem fontes lentas',
+  };
 
   const vivas = [vix.ok && 'VixSrc', vid.ok && 'vidsrc.in'].filter(Boolean);
-  if (vivas.length === 2) return { ok: true, message: 'ambas as fontes OK' };
-  if (vivas.length === 1) {
-    const morta = vix.ok ? vid.message : vix.message;
-    return { ok: true, degraded: true, message: `degradado — só ${vivas[0]} viva. Falha: ${morta}` };
+  if (!vivas.length) {
+    return { ok: false, message: `ambas em baixo. ${vix.message} | ${vid.message}` };
   }
-  return { ok: false, message: `ambas em baixo. ${vix.message} | ${vid.message}` };
+
+  let r;
+  if (vivas.length === 2) {
+    r = { ok: true, message: 'ambas as fontes OK' };
+  } else {
+    const morta = vix.ok ? vid.message : vix.message;
+    r = { ok: true, degraded: true, message: `degradado — só ${vivas[0]} viva. Falha: ${morta}` };
+  }
+
+  if (lentas.length) {
+    // `slow` distingue "lenta" de "em baixo" no texto do alerta: o remédio é
+    // outro (não há redundância a repor — a fonte responde, mas engasga).
+    return {
+      ok: true, degraded: true, slow: true,
+      message: r.degraded
+        ? `${r.message} | lenta: ${lentasTxt}`
+        : `as fontes respondem mas entregam devagar — ${lentasTxt}`,
+    };
+  }
+  return r;
 }
 
 // ── Alerting ──────────────────────────────────────────────────────────────────
@@ -205,8 +236,12 @@ async function healthCheck() {
       if (lastStatus !== 'degraded') {
         console.log(`[health] ⚠ DEGRADADO: ${result.message}`);
         await sendAlert(
-          '⚠️ <b>StreamIMDb — Fonte em baixo</b>',
-          `${result.message}\n<i>O serviço continua a funcionar, mas sem redundância.</i>`,
+          result.slow
+            ? '⚠️ <b>StreamIMDb — Fonte lenta</b>'
+            : '⚠️ <b>StreamIMDb — Fonte em baixo</b>',
+          result.slow
+            ? `${result.message}\n<i>O serviço responde, mas o vídeo vai parar para carregar nestes títulos.</i>`
+            : `${result.message}\n<i>O serviço continua a funcionar, mas sem redundância.</i>`,
         );
       }
       lastStatus = 'degraded';

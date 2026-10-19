@@ -79,6 +79,17 @@ builder.defineStreamHandler(async (args) => {
           ? ` · 🔊 ${audio.join('/')}${s.audioInferred ? '*' : ''}`
           : '';
 
+        // Aviso só nas entradas que a medição de débito (stream_probe.js) diz que
+        // vão parar para carregar — as boas ficam como estão, sem ruído. Os
+        // lentos só vão para o fim da lista, não desaparecem: continua a poder
+        // escolher-se um se for a única com a língua pretendida.
+        // STREAM_SPEED_LABEL=off desliga o aviso.
+        const k = s.probe?.klass;
+        const speedInfo = process.env.STREAM_SPEED_LABEL === 'off' ? ''
+          : k === 'lento' ? ' · 🐌 lenta'
+          : k === 'erro'  ? ' · ✗ falhou'
+          : '';
+
         const titlePrefix = type === 'series' ? `S${season}E${episode} · ` : '';
         // A fonte vai no título porque cada uma traz faixas diferentes — assim
         // dá para escolher a certa na lista do Stremio.
@@ -106,7 +117,7 @@ builder.defineStreamHandler(async (args) => {
         return {
           url:   streamUrl,
           name:  'StreamIMDb',
-          title: `${titlePrefix}${s.quality}${srcInfo}${audioInfo}`,
+          title: `${titlePrefix}${s.quality}${srcInfo}${audioInfo}${speedInfo}`,
           ...(subtitles.length ? { subtitles } : {}),
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         };

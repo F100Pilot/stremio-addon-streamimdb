@@ -33,6 +33,8 @@ Reiniciar: `pm2 restart stremio-addon --update-env`
 - `diag_quality.js` — porque é que fica em 720p: variantes anunciadas vs débito real
 - `diag_vixsrc_params.js` — o `h=1`/`b=1` do URL do master limitam a qualidade?
 - `diag_entrega.js` — o mesmo segmento por localhost vs túnel: onde se perde o débito
+- `stream_probe.js` — mede o débito de cada stream por título e ordena em função disso
+- `diag_probe.js` — mostra as medições e a ordem final de UM título
 
 ## Fluxo do Scraper (ordem de tentativas em `fetchVideoSource`)
 1. **datacenter_scraper** (VixSrc, Vidlink — só axios) — devolve **todas** as
@@ -153,6 +155,50 @@ Motivo concreto: quando o `vidsrc.in` desapareceu (`ENOTFOUND`, Out/2026), o
 resolver lançava o Chromium em **todos** os títulos sem áudio inglês — que na
 VixSrc são a maioria — só para falhar logo a seguir no DNS. Era o grosso da
 demora na primeira reprodução de cada título.
+
+### Medição de débito por título (`stream_probe.js`)
+Uma fonte pode **responder** e mesmo assim engasgar: em Out/2026 a API da
+VixSrc dava 200 o tempo todo enquanto a CDN entregava menos do que a variante
+pedia. Nenhum "a fonte está viva?" apanha isso — mede-se se os segmentos chegam
+mais depressa do que são consumidos.
+
+- **Métrica:** *factor de tempo real* = segundos de vídeo descarregados por
+  segundo decorrido, a puxar segmentos em **sequência** como um player.
+  `>= 1.5` ok · `1.0–1.5` marginal · `< 1.0` lento (vai parar para carregar).
+- **Vários segmentos, não um:** com ficheiros pequenos o tempo é dominado pela
+  latência de abrir a ligação, não pela banda. Um único segmento de 240 KB deu
+  0.4 Mbps e quase nos fez culpar a CDN quando os outros players tocavam bem.
+- **Mede a variante de topo** (a que o player tenta primeiro), com o mesmo UA e
+  Referer/Origin do proxy `/seg`.
+- **Só mede CDN → servidor.** O troço servidor → túnel → cliente é outro
+  (`diag_entrega.js`). "ok" aqui não garante que não engasgue por upload.
+- **Latência:** a medição arranca logo que a fonte resolve, em paralelo com TMDB,
+  browser e legendas. No fim espera no máximo `STREAM_PROBE_WAIT_MS` (2s). Se não
+  acabou, o stream sai sem medição e a medição termina em segundo plano **nos
+  mesmos objectos que estão na cache** — os pedidos seguintes reordenam já com ela.
+  Com uma CDN lenta isto custa até ~2s na 1.ª abertura de cada título.
+- **Ordem** (`orderStreams`, devolve array novo, não mexe na cache):
+  estado medido (ok > sem medição > marginal > lento > erro) → língua preferida
+  (`STREAM_PREFER_LANG`) → factor → ordem original. Só reordena: **nada é
+  escondido**; os lentos ficam no fim com "🐌 lenta" no título.
+- **Health check:** uma fonte cuja mediana (≥5 amostras, última hora) fique
+  abaixo de 1.0 marca o serviço como *degradado* com alerta "Fonte lenta". Tem
+  histerese (entra < 1.0, sai ≥ 1.2) para não oscilar. O `/health` expõe as
+  fontes e os últimos 20 títulos medidos em `scraper.probe`.
+
+Não confundir com `diag_quality.js` (variantes anunciadas) nem `diag_entrega.js`
+(túnel): este é o que corre em produção, por título.
+
+### Renovação de tokens — inoperante nesta branch (pré-existente)
+`refreshBase` e o ramo de erro do `/hls` só disparam se `parseRefererMeta`
+reconhecer o referer, e esse regex só conhece o formato antigo
+`/embed/{tv,movie}/tt…`. Nenhum referer das fontes actuais bate com ele
+(`vixsrc.to/api/...`, `vidlink.pro/`, `.../embed/player/tv/...`), por isso a
+renovação nunca corre. Consequência provável: se o token expirar a meio de um
+filme longo, os segmentos passam a dar 403 e o vídeo pára. Quando for
+reactivada, atenção a `fresh.streams[0]`: assume que o primeiro stream é o que
+está a tocar, o que com várias fontes (e agora com a ordem por medição) deixa de
+ser verdade — escolher por `s.referer === referer`.
 
 ### Nunca comprimir o `/seg`
 O `compression()` é montado com um filtro que exclui a rota `/seg`. Não é
