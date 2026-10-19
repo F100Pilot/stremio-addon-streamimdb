@@ -194,6 +194,20 @@ const VIDLINK_REF = 'https://vidlink.pro';
 // O proxy por omissão é o que o leitor usa; VIDLINK_PROXY permite trocá-lo.
 const VIDLINK_PROXY = (process.env.VIDLINK_PROXY || 'https://surge.flooderrr.store').replace(/\/+$/, '');
 const VIDLINK_KEEP = new Set(['auth', 'expires', 'hash', 'key', 'sign', 't', 'token']);
+// DASH com requiresProxy: réplica de `v()` do leitor. A CDN (CloudFront) pede
+// um cookie assinado, que vai em base64url no parâmetro `sc`:
+//   {base}/sacdn{pathname}?{query}&host={origin}&sc={base64url(cookie)}
+function vidlinkDashUrl(mpdUrl, headers) {
+  let u;
+  try { u = new URL(mpdUrl); } catch { return null; }
+  const cookie = Object.entries(headers && typeof headers === 'object' ? headers : {})
+    .find(([k, v]) => k.toLowerCase() === 'cookie' && typeof v === 'string');
+  if (!cookie) return null;
+  const sc = Buffer.from(cookie[1], 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const extra = [['host', u.origin], ['sc', sc]].map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  return `${VIDLINK_PROXY}/sacdn${u.pathname}?${[u.search.slice(1), extra].filter(Boolean).join('&')}`;
+}
+
 function vidlinkProxyUrl(fileUrl, headers) {
   let u;
   try { u = new URL(fileUrl); } catch { return null; }
@@ -221,12 +235,28 @@ async function tryVidlink(tmdbId, type, season, episode) {
     const apiUrl = type === 'series'
       ? `${VIDLINK_REF}/api/b/tv/${encoded}/${season}/${episode}?multiLang=0`
       : `${VIDLINK_REF}/api/b/movie/${encoded}?multiLang=0`;
+    // `x-playback-environment` diz à API o que o cliente sabe tocar. É o que o
+    // browser manda (Brave/Chrome no PC: dash-hevc), e só com ele a API devolve
+    // a versão DASH — a única que a CDN serve. Sem ele vêm .mp4 que dão 429
+    // a toda a gente, até pelo proxy do próprio Vidlink.
+    const pageRef = type === 'series'
+      ? `${VIDLINK_REF}/tv/${tmdbId}/${season}/${episode}`
+      : `${VIDLINK_REF}/movie/${tmdbId}`;
     const res = await axios.get(apiUrl, {
-      headers: { 'User-Agent': UA, Referer: VIDLINK_REF },
+      headers: { 'User-Agent': UA, Referer: pageRef, 'x-playback-environment': process.env.VIDLINK_PLAYBACK_ENV || 'dash-hevc' },
       timeout: 8000, validateStatus: s => s < 500,
     });
     const stream = res.data && res.data.stream;
     const playlist = stream && stream.playlist;
+
+    if (stream && stream.deliveryType === 'dash' && playlist) {
+      const mpd = stream.requiresProxy === true ? vidlinkDashUrl(playlist, stream.playlistHeaders) : playlist;
+      if (!mpd) { console.log('[dc:vidlink] DASH sem cookie para o proxy'); return null; }
+      const q = playlist.match(/_(\d{3,4})_(?:h26[45]|hevc|avc)/i);
+      const quality = q ? `${q[1]}p` : 'Auto';
+      console.log(`[dc:vidlink] ✓ DASH ${quality}: ${mpd.substring(0, 70)}...`);
+      return [{ url: mpd, quality, kind: 'dash', proxyable: true, referer: VIDLINK_REF + '/' }];
+    }
 
     // Formato novo (Out/2026): em vez de `playlist` (HLS) vem `type:"file"` com
     // `qualities` — ficheiros .mp4 por resolução, servidos por uma CDN que
@@ -295,4 +325,4 @@ async function fetchFromDatacenterSources(imdbId, type, season, episode) {
   return streams;
 }
 
-module.exports = { fetchFromDatacenterSources, vidlinkProxyUrl };
+module.exports = { fetchFromDatacenterSources, vidlinkProxyUrl, vidlinkDashUrl };

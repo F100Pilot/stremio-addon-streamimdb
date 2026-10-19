@@ -515,7 +515,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
 // fresh CDN base URL and retries the segment with the new token.
 // A mesma rotina serve /seg (segmentos HLS) e /file (ficheiros .mp4 inteiros do
 // Vidlink): ambas reencaminham bytes com Referer e respeitam Range.
-async function proxyMedia(req, res, label, defaultType) {
+async function proxyMedia(req, res, label, defaultType, preset) {
   if (req.method === 'OPTIONS' || (req.method === 'HEAD' && label === 'seg')) {
     res.set('Content-Type', defaultType);
     res.set('Access-Control-Allow-Origin', '*');
@@ -524,7 +524,7 @@ async function proxyMedia(req, res, label, defaultType) {
     res.set('Accept-Ranges', 'bytes');
     return res.status(200).end();
   }
-  const data = decodeProxy(req.params.encoded);
+  const data = preset || decodeProxy(req.params.encoded);
   if (!data?.u) { console.log(`[proxy/${label}] token inválido`); return res.status(400).send('Bad request'); }
   console.log(`[proxy/${label}] ⇢ ${req.method} ${data.u.substring(0, 80)}`);
 
@@ -609,6 +609,58 @@ async function proxyMedia(req, res, label, defaultType) {
 }
 app.all('/seg/:encoded.ts',   (req, res) => proxyMedia(req, res, 'seg',  'video/MP2T'));
 app.all('/file/:encoded.mp4', (req, res) => proxyMedia(req, res, 'file', 'video/mp4'));
+
+// ── DASH (Vidlink) ───────────────────────────────────────────────────────────
+// O manifesto vem do proxy do Vidlink e só é servido com Referer/Origin dele;
+// os segmentos são templates ($RepresentationID$, $Number$) com caminho
+// absoluto ("/sacdn/...?host=...&sc=..."), por isso não dá para assinar cada
+// URL como no HLS. Em vez disso, cada caminho absoluto passa a apontar para
+// /dseg/{token}/..., onde o token assinado fixa a ORIGEM (o proxy do Vidlink) e
+// o Referer; o /dseg só aceita caminhos /sacdn/ dessa origem — não serve de
+// proxy aberto.
+function rewriteMpd(xml, mpdUrl, ref) {
+  const origin = new URL(mpdUrl).origin;
+  const tok = sign({ o: origin, r: ref });
+  const pre = `${SERVER_BASE}/dseg/${tok}`;
+  const fix = v => {
+    if (v.startsWith('/')) return pre + v;
+    if (v.startsWith(origin + '/')) return pre + v.slice(origin.length);
+    return v;   // relativo: resolve-se contra o URL do manifesto, que já é nosso
+  };
+  return xml
+    .replace(/\b(initialization|media|sourceURL)="([^"]+)"/g, (_, a, v) => `${a}="${fix(v)}"`)
+    .replace(/<BaseURL>([^<]+)<\/BaseURL>/g, (_, v) => `<BaseURL>${fix(v.trim())}</BaseURL>`);
+}
+
+app.get('/dash/:encoded.mpd', async (req, res) => {
+  const data = decodeProxy(req.params.encoded);
+  if (!data?.u) { console.log('[proxy/dash] token inválido'); return res.status(400).send('Bad request'); }
+  console.log(`[proxy/dash] ⇢ GET ${data.u.substring(0, 80)}`);
+  try {
+    const up = await axios.get(data.u, {
+      headers: { 'User-Agent': PROXY_UA, ...(data.r ? { Referer: data.r, Origin: originFromReferer(data.r) } : {}) },
+      timeout: 20000, responseType: 'text', transformResponse: x => x, httpAgent, httpsAgent,
+    });
+    const body = rewriteMpd(String(up.data), data.u, data.r || '');
+    console.log(`[proxy/dash] ✓ ${body.length} bytes`);
+    res.set('Content-Type', 'application/dash+xml');
+    res.set('Cache-Control', 'no-cache');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.send(body);
+  } catch (e) {
+    console.error(`[proxy/dash] falhou (${e.response?.status || 'network'}): ${e.message}`);
+    if (!res.headersSent) res.status(502).send('Proxy error');
+  }
+});
+
+app.all(/^\/dseg\/([^/]+)(\/sacdn\/.+)$/, (req, res) => {
+  const t = verify(req.params[0]);
+  if (!t?.o) { console.log('[proxy/dseg] token inválido'); return res.status(400).send('Bad request'); }
+  const q = req.originalUrl.indexOf('?');
+  const target = t.o + req.params[1] + (q >= 0 ? req.originalUrl.slice(q) : '');
+  const type = /\.m4s(\?|$)/.test(req.params[1]) ? 'video/iso.segment' : 'video/mp4';
+  return proxyMedia(req, res, 'dseg', type, { u: target, r: t.r });
+});
 
 // Descodifica os bytes de uma legenda para texto.
 //

@@ -37,6 +37,13 @@ function makeFileProxyUrl(fileUrl, referer) {
   return `${SERVER_BASE}/file/${token}.mp4`;
 }
 
+// Manifesto DASH (.mpd, Vidlink): /dash reescreve-o para os segmentos também
+// passarem por nós (a CDN exige Referer, que o Stremio não manda).
+function makeDashProxyUrl(mpdUrl, referer) {
+  const token = sign({ u: mpdUrl, r: referer });
+  return `${SERVER_BASE}/dash/${token}.mpd`;
+}
+
 function makeSubProxyUrl(subUrl, referer) {
   const token = sign({ u: subUrl, r: referer });
   return `${SERVER_BASE}/sub/${token}.vtt`;
@@ -73,6 +80,8 @@ builder.defineStreamHandler(async (args) => {
           ? s.url
           : s.kind === 'file'
             ? makeFileProxyUrl(s.url, s.referer || referer)
+          : s.kind === 'dash'
+            ? makeDashProxyUrl(s.url, s.referer || referer)
             : makeHlsProxyUrl(s.url, s.referer || referer);
 
         // Idiomas de ÁUDIO (faixas do master m3u8, anotadas em scraper.js).

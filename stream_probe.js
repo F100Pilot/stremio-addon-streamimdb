@@ -155,6 +155,10 @@ async function probeOne(s) {
   // Ficheiro inteiro (.mp4): não há playlist nem duração por segmento. Mede-se
   // o débito de um troço inicial e compara-se com o bitrate típico da
   // resolução anunciada — é uma estimativa, não uma medição de tempo real.
+  // DASH: o manifesto é XML e os segmentos são templates — não medido (não
+  // entra nas estatísticas nem leva rótulo de lento/falhou).
+  if (s.kind === 'dash') return { klass: null, factor: null, reason: 'DASH não medido', ms: 0 };
+
   if (s.kind === 'file') {
     const r = await downloadSegment({ url: s.url, dur: 0 }, referer, deadline, MAX_BYTES);
     if (r.status >= 400) return falha(`ficheiro HTTP ${r.status}`);

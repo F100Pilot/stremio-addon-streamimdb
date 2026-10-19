@@ -225,6 +225,15 @@ ficheiros pelo proxy do Vidlink; `vidlinkProxyUrl()` replica a função dele
 (`{VIDLINK_PROXY}/mp{path}?{sign,t,…}&headers={json}&host={origin}`, proxy por
 omissão `https://surge.flooderrr.store`). Se o leitor mudar de proxy, actualizar
 `VIDLINK_PROXY` (env) ou o default — ver `diag_vidlink_m.js`.
+**DASH (o caminho que funciona):** os `.mp4` dão 429 a toda a gente, até pelo proxy
+do Vidlink. O browser manda `x-playback-environment: dash-hevc` e só com esse
+cabeçalho a API devolve `deliveryType:"dash"` (`.mpd` na CDN `sacdn`, com cookie
+CloudFront em `playlistHeaders`). `vidlinkDashUrl()` replica a `v()` do leitor
+(`{proxy}/sacdn{path}?…&host=…&sc={base64url(cookie)}`). O proxy do Vidlink só serve
+com `Referer: https://vidlink.pro/` (sem ele: 403 Cloudflare), por isso o Stremio
+passa por `/dash/{token}.mpd`, que reescreve os templates de segmento para
+`/dseg/{token}/sacdn/...` (token assinado fixa a origem e o Referer; só aceita
+`/sacdn/`). DASH não é medido pelo probe. `VIDLINK_PLAYBACK_ENV` muda o cabeçalho.
 `stream_probe.js` mede ficheiros pelo débito de um troço inicial contra o bitrate
 típico da resolução (estimativa, não tempo real).
 
