@@ -88,6 +88,16 @@ main() {
     recusa "o servidor divergiu de origin/$BRANCH (tem commits locais que não estão no remoto)"; return 1
   fi
 
+  # O `npm install` reescreve o package-lock.json quando ele não bate certo com
+  # o package.json (o do repositório está desactualizado há muito). Isso deixava
+  # o repositório "sujo" e a verificação de alterações locais RECUSAVA o deploy
+  # seguinte — apanhado ao rever, não nos testes (que simulavam o npm).
+  # É dado derivado e o do repositório é o que manda: descarta-se a reescrita
+  # local, também ANTES da verificação — um lock sujo deixado por um `npm
+  # install` anterior (ou pelo script antigo) não pode bloquear nada.
+  descartar_lock() { git checkout -- package-lock.json 2>/dev/null || true; }
+  descartar_lock
+
   # Alterações tuas no servidor (um hotfix à mão, por exemplo): não as atropelar.
   # O node_modules fica de fora — está versionado no git e o `npm install` mexe-lhe.
   local SUJO
@@ -121,8 +131,29 @@ main() {
     NEED_NPM=1
   fi
 
-  if git diff --name-only "$PREV" HEAD | grep -qE '^(package\.json|package-lock\.json)$'; then
+  # Os ficheiros alterados vão para uma variável ANTES de se procurar neles.
+  # `git diff | grep -q` sai ao primeiro resultado e o git apanha SIGPIPE; com
+  # `pipefail` isso conta como falha do pipeline inteiro. Com diffs pequenos
+  # passa despercebido — só aparece em escala (ex.: o commit que tirou 11 639
+  # ficheiros do node_modules), onde falhava SEM erro e saltava a instalação.
+  local ALTERADOS APAGADOS
+  ALTERADOS=$(git diff --name-only "$PREV" HEAD)
+  APAGADOS=$(git diff --name-only --diff-filter=D "$PREV" HEAD)
+
+  if grep -qE '^(package\.json|package-lock\.json)$' <<<"$ALTERADOS"; then
     NEED_NPM=1
+  fi
+
+  # Se o commit TIROU o node_modules do git, o merge acabou de o apagar do
+  # disco (o git remove do disco o que deixa de estar versionado) e a app fica
+  # sem dependências. Sem isto, o restart falhava, o /health não respondia e o
+  # commit era revertido — seguro, mas a remoção nunca ficava aplicada.
+  # É dado derivado, por isso reinstala-se DE RAIZ: um node_modules meio
+  # apagado, com restos não versionados por cima, é pior do que nenhum.
+  local LIMPAR_NM=0
+  if grep -q '^node_modules/' <<<"$APAGADOS"; then
+    log "o commit tirou o node_modules do git — reinstalação limpa das dependências"
+    LIMPAR_NM=1; NEED_NPM=1
   fi
 
   # Volta ao commit anterior e põe tudo como estava. $1 = motivo,
@@ -132,7 +163,7 @@ main() {
     log "ROLLBACK: $motivo"
     echo "$REMOTE" > "$STATE/failed"
     git reset --hard --quiet "$PREV"
-    if [ "$NEED_NPM" = 1 ]; then npm install --omit=dev --no-audit --no-fund >/dev/null 2>&1 || true; fi
+    if [ "$NEED_NPM" = 1 ]; then npm install --omit=dev --no-audit --no-fund >/dev/null 2>&1 || true; descartar_lock; fi
     if [ "$reiniciou" = 1 ]; then
       pm2 restart "$APP" --update-env >/dev/null 2>&1 || true
       if esperar_saude; then log "rollback concluído: a voltar a ${PREV:0:7}, serviço saudável"
@@ -161,11 +192,13 @@ main() {
   done < <(git ls-files -- '*.js' ':(exclude)node_modules' ':(exclude)node_modules/**')
   [ -n "$erro" ] && { voltar_atras "$erro" 0; return 1; }
 
-  # 2) Dependências, só se o package.json mudou
+  # 2) Dependências, só quando mudaram (package.json) ou ficaram em falta
   if [ "$NEED_NPM" = 1 ]; then
-    log "package.json mudou — npm install"
+    log "a instalar dependências (npm install)"
+    if [ "$LIMPAR_NM" = 1 ]; then rm -rf "$REPO/node_modules"; fi
     npm install --omit=dev --no-audit --no-fund >"$STATE/npm.log" 2>&1 \
       || { voltar_atras "npm install falhou (ver $STATE/npm.log)" 0; return 1; }
+    descartar_lock
   fi
 
   # 3) Reiniciar e esperar que responda

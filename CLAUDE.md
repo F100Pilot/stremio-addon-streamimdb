@@ -165,7 +165,8 @@ Logs: `journalctl -u stremio-autodeploy -n 50` (ou `/var/log/stremio-autodeploy.
 2. **Recusa e avisa (uma vez por commit)** se: o servidor não está na branch
    certa · tem commits que o remoto não tem (divergiu) · tem alterações locais
    não commitadas (um hotfix à mão — nunca as atropela). O `node_modules` fica
-   de fora desta verificação (está versionado e o `npm install` mexe-lhe).
+   de fora desta verificação: até ao commit que o tirou do git estava versionado
+   e o `npm install` mexia-lhe (ver "Transição" abaixo).
 3. `git merge --ff-only` (só em linha recta, nunca decide um merge por ti).
 4. `node --check` a todos os `.js`. **Erro de sintaxe → rollback sem reiniciar**:
    o serviço nem chega a cair.
@@ -191,8 +192,25 @@ Telegram, webhook — via `deploy/notify.js`.
   *degradado*). Só se verifica que o processo arrancou.
 - Testado num ambiente simulado (remoto local, `pm2`/`npm` falsos): commit
   saudável, `package.json`, serviço doente, sintaxe partida, hotfix local,
-  divergência, pausa, `node_modules` sujo, duas execuções em simultâneo e sem
-  rede. **Não foi testado no Proxmox real**, nem o systemd/cron em si.
+  divergência, pausa, `node_modules` sujo, duas execuções em simultâneo, sem
+  rede, e a remoção do `node_modules` do git (com o script novo e com o antigo).
+  **Não foi testado no Proxmox real**, nem o systemd/cron em si.
+
+### Transição: `node_modules` deixou de estar versionado
+Estava no git um resumo **antigo e parcial** (224 pacotes, sem `dotenv`,
+`compression` nem `nodemailer`) que não correspondia ao `package.json` e nunca
+serviu para correr a app. O `.gitignore` já o ignorava, mas isso não desfaz o
+que já estava versionado. Foi retirado com `git rm -r --cached`.
+
+Efeito a conhecer: **o git apaga do disco o que deixa de estar versionado**, por
+isso o `git pull` que traz esse commit deixa a app sem dependências até haver
+`npm install`.
+- **Com o auto-deploy:** o script detecta a remoção, apaga o `node_modules` e
+  reinstala de raiz antes de reiniciar. (O script *antigo* só instalava se o
+  `package.json` mudasse; por isso o mesmo commit acrescentou `engines` ao
+  `package.json`, o que também é documentação útil: Node >= 18.)
+- **À mão:** `git checkout -- node_modules; git pull; rm -rf node_modules;
+  npm install --omit=dev; pm2 restart stremio-addon --update-env`.
 
 ## Proxy HLS (`server.js`)
 - Stream `proxyable:true` → `addon.js` cria `/hls/{token}.m3u8` com `{u, r}` (r = referer da fonte)
@@ -267,8 +285,11 @@ chunked encoding, o que estraga a estimativa de débito do player e atrapalha
 os pedidos `Range`. Sintoma: vídeo a parar para carregar mesmo com débito
 de sobra para a variante.
 
-Os manifestos (`/hls`), as legendas (`/sub`) e a landing page continuam
-comprimidos — aí o ganho é real.
+As legendas (`/sub`) e a landing page (`text/vtt`, `text/html`) continuam
+comprimidas. Os manifestos `/hls` **nunca** foram comprimidos: a biblioteca não
+considera `application/x-mpegURL` comprimível, nem antes nem depois do filtro —
+o filtro só tem efeito no `/seg`, que vem como `text/html`. (Verificado com a
+biblioteca real e com um controlo sem o filtro.)
 
 Verificar que está bem (não deve aparecer `content-encoding: gzip`):
 ```
