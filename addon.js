@@ -30,6 +30,13 @@ function makeHlsProxyUrl(streamUrl, referer) {
   return `${SERVER_BASE}/hls/${token}.m3u8`;
 }
 
+// Ficheiro inteiro (.mp4 do Vidlink): não é HLS, vai pela rota /file, que
+// reencaminha Range/Content-Range para o player poder saltar no tempo.
+function makeFileProxyUrl(fileUrl, referer) {
+  const token = sign({ u: fileUrl, r: referer });
+  return `${SERVER_BASE}/file/${token}.mp4`;
+}
+
 function makeSubProxyUrl(subUrl, referer) {
   const token = sign({ u: subUrl, r: referer });
   return `${SERVER_BASE}/sub/${token}.vtt`;
@@ -64,7 +71,9 @@ builder.defineStreamHandler(async (args) => {
       const streams = result.streams.map(s => {
         const streamUrl = s.proxyable === false
           ? s.url
-          : makeHlsProxyUrl(s.url, s.referer || referer);
+          : s.kind === 'file'
+            ? makeFileProxyUrl(s.url, s.referer || referer)
+            : makeHlsProxyUrl(s.url, s.referer || referer);
 
         // Idiomas de ÁUDIO (faixas do master m3u8, anotadas em scraper.js).
         // É esta a informação que interessa para escolher o stream — a VixSrc

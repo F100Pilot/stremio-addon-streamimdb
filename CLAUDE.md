@@ -212,6 +212,16 @@ isso o `git pull` que traz esse commit deixa a app sem dependências até haver
 - **À mão:** `git checkout -- node_modules; git pull; rm -rf node_modules;
   npm install --omit=dev; pm2 restart stremio-addon --update-env`.
 
+## Vidlink (formato de Out/2026)
+A API `vidlink.pro/api/b/...` deixou de devolver `stream.playlist` (HLS) e passou a
+devolver `stream.type:"file"` com `qualities` — ficheiros `.mp4` por resolução numa
+CDN que exige `Referer` (`requiresProxy`). `datacenter_scraper.js` escolhe a melhor
+resolução e marca o stream com `kind:'file'`; `addon.js` manda-o pela rota
+`/file/{token}.mp4` (não `/hls`), que é a mesma rotina do `/seg` (`proxyMedia`)
+com Range/HEAD passados à CDN para o player poder saltar no tempo.
+`stream_probe.js` mede ficheiros pelo débito de um troço inicial contra o bitrate
+típico da resolução (estimativa, não tempo real).
+
 ## Proxy HLS (`server.js`)
 - Stream `proxyable:true` → `addon.js` cria `/hls/{token}.m3u8` com `{u, r}` (r = referer da fonte)
 - **Token assinado (HMAC-SHA256)** via `proxy_token.js` (`sign`/`verify`) — impede

@@ -513,9 +513,11 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
 // Proxy an HLS segment (.ts / .aac / etc.): streams bytes from CDN with Referer.
 // On upstream failure (5xx/timeout/403), tries one refresh via scraper to get a
 // fresh CDN base URL and retries the segment with the new token.
-app.all('/seg/:encoded.ts', async (req, res) => {
-  if (req.method === 'HEAD' || req.method === 'OPTIONS') {
-    res.set('Content-Type', 'video/MP2T');
+// A mesma rotina serve /seg (segmentos HLS) e /file (ficheiros .mp4 inteiros do
+// Vidlink): ambas reencaminham bytes com Referer e respeitam Range.
+async function proxyMedia(req, res, label, defaultType) {
+  if (req.method === 'OPTIONS' || (req.method === 'HEAD' && label === 'seg')) {
+    res.set('Content-Type', defaultType);
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Range, Content-Type');
@@ -523,8 +525,8 @@ app.all('/seg/:encoded.ts', async (req, res) => {
     return res.status(200).end();
   }
   const data = decodeProxy(req.params.encoded);
-  if (!data?.u) { console.log('[proxy/seg] token inválido'); return res.status(400).send('Bad request'); }
-  console.log(`[proxy/seg] ⇢ ${req.method} ${data.u.substring(0, 80)}`);
+  if (!data?.u) { console.log(`[proxy/${label}] token inválido`); return res.status(400).send('Bad request'); }
+  console.log(`[proxy/${label}] ⇢ ${req.method} ${data.u.substring(0, 80)}`);
 
   const MAX_SEG_RETRIES = parseInt(process.env.MAX_SEG_RETRIES) || 1;
   let segmentUrl = data.u;
@@ -533,7 +535,11 @@ app.all('/seg/:encoded.ts', async (req, res) => {
 
   for (let attempt = 0; attempt <= MAX_SEG_RETRIES; attempt++) {
     try {
-      const upstream = await axios.get(segmentUrl, {
+      // Num ficheiro inteiro o player faz HEAD para saber o tamanho antes de
+      // pedir Ranges: passa-se o HEAD à CDN em vez de responder às cegas.
+      const upstream = await axios.request({
+        method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+        url: segmentUrl,
         headers: {
           'User-Agent': PROXY_UA,
           ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
@@ -557,6 +563,7 @@ app.all('/seg/:encoded.ts', async (req, res) => {
       if (unzip) { res.removeHeader('content-length'); body = upstream.data.pipe(unzip); }
       if (!upstream.headers['accept-ranges']) res.set('Accept-Ranges', 'bytes');
       res.set('Access-Control-Allow-Origin', '*');
+      if (req.method === 'HEAD') { upstream.data.destroy(); return res.end(); }
 
       let closed = false;
       // Só a RESPOSTA diz se o cliente desligou: no Node >=16 o 'close' do req
@@ -576,7 +583,7 @@ app.all('/seg/:encoded.ts', async (req, res) => {
     } catch (err) {
       const status = err.response?.status;
       const retryable = !status || status === 403 || status >= 502;
-      console.error(`[proxy/seg] attempt ${attempt + 1}/${MAX_SEG_RETRIES + 1} failed (${status || 'network'}): ${err.message}`);
+      console.error(`[proxy/${label}] attempt ${attempt + 1}/${MAX_SEG_RETRIES + 1} failed (${status || 'network'}): ${err.message}`);
 
       if (attempt < MAX_SEG_RETRIES && retryable && oldBase && segmentUrl.startsWith(oldBase)) {
         const meta = parseRefererMeta(referer);
@@ -599,7 +606,9 @@ app.all('/seg/:encoded.ts', async (req, res) => {
       return;
     }
   }
-});
+}
+app.all('/seg/:encoded.ts',   (req, res) => proxyMedia(req, res, 'seg',  'video/MP2T'));
+app.all('/file/:encoded.mp4', (req, res) => proxyMedia(req, res, 'file', 'video/mp4'));
 
 // Descodifica os bytes de uma legenda para texto.
 //

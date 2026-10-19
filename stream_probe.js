@@ -152,6 +152,22 @@ async function probeOne(s) {
   const referer = s.referer || '';
   const falha = (reason) => ({ klass: 'erro', factor: 0, mbps: 0, reason, ms: Date.now() - t0 });
 
+  // Ficheiro inteiro (.mp4): não há playlist nem duração por segmento. Mede-se
+  // o débito de um troço inicial e compara-se com o bitrate típico da
+  // resolução anunciada — é uma estimativa, não uma medição de tempo real.
+  if (s.kind === 'file') {
+    const r = await downloadSegment({ url: s.url, dur: 0 }, referer, deadline, MAX_BYTES);
+    if (r.status >= 400) return falha(`ficheiro HTTP ${r.status}`);
+    if (!r.bytes) return falha(r.status ? `sem dados em ${BUDGET_MS}ms` : 'sem resposta');
+    const secs = Math.max(r.ms / 1000, 0.001);
+    const mbps = (r.bytes * 8) / secs / 1e6;
+    const nominal = { 2160: 12, 1440: 8, 1080: 5, 720: 2.5, 480: 1.2, 360: 0.8 };
+    const q = parseInt(String(s.quality), 10);
+    const expected = nominal[q] || 2.5;
+    const factor = mbps / expected;
+    return { klass: classify(factor), factor, mbps, ttfbMs: r.ttfb, segs: 0, ms: Date.now() - t0 };
+  }
+
   const m = await getText(s.url, referer, deadline);
   if (m.status !== 200) return falha(`master ${m.status ? `HTTP ${m.status}` : (m.reason || 'sem resposta')}`);
 

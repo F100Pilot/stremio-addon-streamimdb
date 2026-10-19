@@ -205,8 +205,27 @@ async function tryVidlink(tmdbId, type, season, episode) {
       headers: { 'User-Agent': UA, Referer: VIDLINK_REF },
       timeout: 8000, validateStatus: s => s < 500,
     });
-    const playlist = res.data && res.data.stream && res.data.stream.playlist;
-    if (!playlist) { console.log('[dc:vidlink] sem playlist'); return null; }
+    const stream = res.data && res.data.stream;
+    const playlist = stream && stream.playlist;
+
+    // Formato novo (Out/2026): em vez de `playlist` (HLS) vem `type:"file"` com
+    // `qualities` — ficheiros .mp4 por resolução, servidos por uma CDN que
+    // exige Referer (`requiresProxy`). Fica a melhor resolução; o ficheiro
+    // passa pelo nosso proxy /file em vez do /hls.
+    if (!playlist && stream && stream.qualities && typeof stream.qualities === 'object') {
+      const opts = Object.entries(stream.qualities)
+        .map(([q, v]) => ({ q: parseInt(q, 10), url: v && v.url, headers: v && v.headers }))
+        .filter(o => o.url && /^https?:/.test(o.url) && o.q > 0)
+        .sort((a, b) => b.q - a.q);
+      if (!opts.length) { console.log('[dc:vidlink] qualities sem URL utilizável'); return null; }
+      const best = opts[0];
+      console.log(`[dc:vidlink] ✓ ficheiro ${best.q}p (${opts.map(o => o.q).join('/')}): ${best.url.substring(0, 70)}...`);
+      return [{ url: best.url, quality: `${best.q}p`, kind: 'file', proxyable: true, referer: VIDLINK_REF + '/' }];
+    }
+    if (!playlist) {
+      console.log('[dc:vidlink] sem playlist — resposta:', JSON.stringify(res.data).slice(0, 160));
+      return null;
+    }
 
     console.log(`[dc:vidlink] ✓ playlist: ${playlist.substring(0, 70)}...`);
 
