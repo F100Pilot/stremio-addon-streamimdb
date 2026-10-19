@@ -16,11 +16,16 @@ const resumo = st => st ? JSON.stringify({
 (async () => {
   const enc = (await axios.get(`https://enc-dec.app/api/enc-vidlink?text=${tmdb}`, { timeout: 10000 })).data.result;
   let dash = null;
-  for (const qs of ['multiLang=0', 'multiLang=1', '', 'multiLang=0&dash=1', 'multiLang=1&dash=1']) {
-    const url = `${REF}/api/b/tv/${enc}/${se}/${ep}${qs ? '?' + qs : ''}`;
-    const r = await axios.get(url, { headers: H, timeout: 20000, validateStatus: () => true }).catch(e => ({ status: 'ERRO ' + e.code }));
+  // O browser manda `x-playback-environment` (Brave no PC: dash-hevc) e a API
+  // escolhe a fonte conforme o que o cliente diz saber tocar.
+  const ENVS = (process.env.ENVS || 'hls,hls-h264,hls-hevc,dash,dash-h264,dash-hevc,mse,native,mp4').split(',');
+  for (const env of ENVS) {
+    const qs = env;
+    const url = `${REF}/api/b/tv/${enc}/${se}/${ep}?multiLang=0`;
+    const r = await axios.get(url, { headers: { ...H, Referer: `${REF}/tv/${tmdb}/${se}/${ep}`, 'x-playback-environment': env }, timeout: 20000, validateStatus: () => true }).catch(e => ({ status: 'ERRO ' + e.code }));
     const st = r.data && r.data.stream;
-    console.log(`\n[${qs || 'sem params'}] HTTP ${r.status} · sourceId=${r.data && r.data.sourceId}\n  ${resumo(st)}`);
+    console.log(`\n[x-playback-environment: ${qs}] HTTP ${r.status} · sourceId=${r.data && r.data.sourceId}\n  ${resumo(st)}`);
+    if (st && st.deliveryType === 'hls' && st.playlist) console.log('  ★ HLS:', st.playlist.slice(0, 120), '· requiresProxy:', st.requiresProxy, '· headers:', JSON.stringify(st.playlistHeaders || {}).slice(0, 120));
     if (!dash && st) {
       if (st.deliveryType === 'dash' && st.playlist) dash = { url: st.playlist, headers: st.playlistHeaders || {} };
       for (const v of Object.values(st.alternates || {})) if (!dash && v.type === 'dash' && v.playlist) dash = { url: v.playlist, headers: v.headers || {} };
