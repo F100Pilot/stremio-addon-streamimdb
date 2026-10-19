@@ -178,10 +178,11 @@ extensão `.html` e a biblioteca comprimia-os), e a passagem das legendas no rel
 só tem efeito no `/seg`, que vem como `text/html`. (Verificado com a biblioteca
 real, com um controlo sem o filtro.)
 
-**Atenção ao reutilizar a lista de ficheiros do git:** o `node_modules`
-versionado aqui é um resumo **antigo e parcial** (224 pacotes; falta `dotenv`,
-`compression`, `nodemailer`). Não corresponde ao `package.json` e nunca serviu
-para correr a app — o Vercel instala as dependências por si.
+**`node_modules` já não está versionado** (tinha um resumo **antigo e parcial**:
+224 pacotes, sem `dotenv`, `compression` nem `nodemailer`; nunca serviu para
+correr a app, o Vercel instalava as dependências por si). Retirado com
+`git rm -r --cached`; o `.gitignore` já o ignorava. Um clone novo precisa de
+`npm install` para correr localmente.
 
 ## Notas
 - **As CDNs bloqueiam IPs de datacenter.** A VixSrc devolve 403 logo na API a
