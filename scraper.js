@@ -72,11 +72,16 @@ async function annotateStreams(streams, originalLanguage = null) {
       return;
     }
     try {
-      const res = await axios.get(s.url, {
-        headers: { 'User-Agent': AUDIO_UA, ...(s.referer ? { Referer: s.referer } : {}) },
-        timeout: 8000, responseType: 'text', maxRedirects: 5, validateStatus: () => true,
-      });
-      const body = typeof res.data === 'string' ? res.data : '';
+      // Reutiliza o master que a fonte já descarregou (VixSrc), se houver.
+      let body = typeof s.masterBody === 'string' ? s.masterBody : null;
+      delete s.masterBody;   // não fica na cache
+      if (body === null) {
+        const res = await axios.get(s.url, {
+          headers: { 'User-Agent': AUDIO_UA, ...(s.referer ? { Referer: s.referer } : {}) },
+          timeout: 8000, responseType: 'text', maxRedirects: 5, validateStatus: () => true,
+        });
+        body = typeof res.data === 'string' ? res.data : '';
+      }
       const langs = [];
       for (const line of body.split('\n')) {
         const t = line.trim();

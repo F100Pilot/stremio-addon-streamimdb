@@ -109,7 +109,7 @@ async function masterInfo(masterUrl, referer) {
       }
       if (subtitles.length) console.log(`[dc:vixsrc] ${subtitles.length} legenda(s) no master m3u8`);
     }
-    return { quality, subtitles };
+    return { quality, subtitles, body };
   } catch (e) { console.log('[dc:vixsrc] masterInfo erro:', e.message); return { quality: null, subtitles: [] }; }
 }
 
@@ -177,7 +177,9 @@ async function tryVixsrc(tmdbId, type, season, episode) {
     // que o nosso servidor busque a CDN e sirva o cliente via /hls.
     // (Nota: se isto for usado num deploy datacenter — ex. Vercel — o inverso
     // é que se aplica: aí proxyable:false é a escolha certa.)
-    return [{ url: masterUrl, quality: info.quality || 'Auto', proxyable: true, referer: apiUrl, subtitles }];
+    // masterBody: o scraper lê dele as línguas do áudio sem voltar a pedir o
+    // master ao vixsrc.to (que anda lento: o 2.º pedido custava 4s+).
+    return [{ url: masterUrl, quality: info.quality || 'Auto', proxyable: true, referer: apiUrl, subtitles, masterBody: info.body }];
   } catch (e) {
     console.log(`[dc:vixsrc] erro: ${e.message}`);
     return null;
