@@ -265,12 +265,13 @@ function setFlag(line, key, value) {
   return re.test(line) ? line.replace(re, `${key}=${value}`) : `${line},${key}=${value}`;
 }
 
-// Tecto de resolução (MAX_STREAM_HEIGHT, por omissão 720; 0 desliga). As CDNs
+// Tecto de resolução (MAX_STREAM_HEIGHT; por omissão 0 = sem tecto, por
+// preferência do utilizador pela definição maior). As CDNs
 // actuais entregam o 1080p mais devagar do que o tempo real (medido: segmentos
 // de 5s a demorar 6-17s no proxy do Vidlink), e o leitor fica 30s+ a juntar
 // reserva antes de arrancar. Só se cortam variantes ACIMA do tecto, e só se
 // sobrar pelo menos uma — nunca se deixa um título sem vídeo.
-const MAX_HEIGHT = parseInt(process.env.MAX_STREAM_HEIGHT ?? '720', 10) || 0;
+const MAX_HEIGHT = parseInt(process.env.MAX_STREAM_HEIGHT ?? '0', 10) || 0;
 
 function capHlsVariants(body) {
   if (!MAX_HEIGHT || !body.includes('#EXT-X-STREAM-INF')) return body;

@@ -28,7 +28,7 @@ const builder = new addonBuilder(manifest);
 // O título mostra a resolução que o leitor vai mesmo receber: o servidor corta
 // as variantes acima de MAX_STREAM_HEIGHT (ver server.js).
 function capQuality(q) {
-  const max = parseInt(process.env.MAX_STREAM_HEIGHT ?? '720', 10) || 0;
+  const max = parseInt(process.env.MAX_STREAM_HEIGHT ?? '0', 10) || 0;
   const h = parseInt(q, 10);
   return max && h > max ? `${max}p` : q;
 }
