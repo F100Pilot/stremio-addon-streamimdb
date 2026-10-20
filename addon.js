@@ -33,8 +33,8 @@ function capQuality(q) {
   return max && h > max ? `${max}p` : q;
 }
 
-function makeHlsProxyUrl(streamUrl, referer) {
-  const token = sign({ u: streamUrl, r: referer });
+function makeHlsProxyUrl(streamUrl, referer, maxH) {
+  const token = sign({ u: streamUrl, r: referer, ...(maxH ? { m: maxH } : {}) });
   return `${SERVER_BASE}/hls/${token}.m3u8`;
 }
 
@@ -47,8 +47,8 @@ function makeFileProxyUrl(fileUrl, referer) {
 
 // Manifesto DASH (.mpd, Vidlink): /dash reescreve-o para os segmentos também
 // passarem por nós (a CDN exige Referer, que o Stremio não manda).
-function makeDashProxyUrl(mpdUrl, referer) {
-  const token = sign({ u: mpdUrl, r: referer });
+function makeDashProxyUrl(mpdUrl, referer, maxH) {
+  const token = sign({ u: mpdUrl, r: referer, ...(maxH ? { m: maxH } : {}) });
   return `${SERVER_BASE}/dash/${token}.mpd`;
 }
 
@@ -83,14 +83,24 @@ builder.defineStreamHandler(async (args) => {
     // A dedup/cache do scraper trata dos casos transitórios.
 
     if (result && result.type === 'direct') {
-      const streams = result.streams.map(s => {
+      // Cada fonte acima de 720p aparece duas vezes: na resolução máxima e numa
+      // entrada "720p" (mesma fonte; o servidor só deixa no manifesto as
+      // variantes ≤720, que arrancam muito mais depressa nestas CDNs). Só para
+      // HLS/DASH pelo nosso proxy — um ficheiro inteiro não tem variantes.
+      const ALT_H = parseInt(process.env.STREAM_ALT_HEIGHT ?? '720', 10) || 0;
+      const expanded = result.streams.flatMap(s => {
+        const h = parseInt(s.quality, 10);
+        const capavel = ALT_H && s.proxyable !== false && s.kind !== 'file' && h > ALT_H;
+        return capavel ? [s, { ...s, quality: `${ALT_H}p`, maxH: ALT_H, alt: true }] : [s];
+      });
+      const streams = expanded.map(s => {
         const streamUrl = s.proxyable === false
           ? s.url
           : s.kind === 'file'
             ? makeFileProxyUrl(s.url, s.referer || referer)
           : s.kind === 'dash'
-            ? makeDashProxyUrl(s.url, s.referer || referer)
-            : makeHlsProxyUrl(s.url, s.referer || referer);
+            ? makeDashProxyUrl(s.url, s.referer || referer, s.maxH)
+            : makeHlsProxyUrl(s.url, s.referer || referer, s.maxH);
 
         // Idiomas de ÁUDIO (faixas do master m3u8, anotadas em scraper.js).
         // É esta a informação que interessa para escolher o stream — a VixSrc
@@ -110,7 +120,7 @@ builder.defineStreamHandler(async (args) => {
         // lentos só vão para o fim da lista, não desaparecem: continua a poder
         // escolher-se um se for a única com a língua pretendida.
         // STREAM_SPEED_LABEL=off desliga o aviso.
-        const k = s.probe?.klass;
+        const k = s.alt ? null : s.probe?.klass;   // a medição foi feita à resolução máxima
         const speedInfo = process.env.STREAM_SPEED_LABEL === 'off' ? ''
           : k === 'lento' ? ' · 🐌 lenta'
           : k === 'erro'  ? ' · ✗ falhou'

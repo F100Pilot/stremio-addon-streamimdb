@@ -265,7 +265,9 @@ function setFlag(line, key, value) {
   return re.test(line) ? line.replace(re, `${key}=${value}`) : `${line},${key}=${value}`;
 }
 
-// Tecto de resolução (MAX_STREAM_HEIGHT; por omissão 0 = sem tecto, por
+// Tecto de resolução. Por stream: o token pode trazer `m` (altura máxima) — é
+// assim que a entrada "720p" de uma fonte 1080p é servida (mesma fonte, o
+// manifesto só deixa as variantes ≤ m). Global: MAX_STREAM_HEIGHT; por omissão 0 = sem tecto, por
 // preferência do utilizador pela definição maior). As CDNs
 // actuais entregam o 1080p mais devagar do que o tempo real (medido: segmentos
 // de 5s a demorar 6-17s no proxy do Vidlink), e o leitor fica 30s+ a juntar
@@ -273,16 +275,16 @@ function setFlag(line, key, value) {
 // sobrar pelo menos uma — nunca se deixa um título sem vídeo.
 const MAX_HEIGHT = parseInt(process.env.MAX_STREAM_HEIGHT ?? '0', 10) || 0;
 
-function capHlsVariants(body) {
-  if (!MAX_HEIGHT || !body.includes('#EXT-X-STREAM-INF')) return body;
+function capHlsVariants(body, max = MAX_HEIGHT) {
+  if (!max || !body.includes('#EXT-X-STREAM-INF')) return body;
   const lines = body.split('\n');
   const height = l => parseInt((l.match(/RESOLUTION=\d+x(\d+)/i) || [])[1], 10) || 0;
   const infs = lines.filter(l => l.trim().startsWith('#EXT-X-STREAM-INF'));
-  if (!infs.some(l => height(l) && height(l) <= MAX_HEIGHT)) return body;
+  if (!infs.some(l => height(l) && height(l) <= max)) return body;
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i].trim();
-    if (t.startsWith('#EXT-X-STREAM-INF') && height(t) > MAX_HEIGHT) {
+    if (t.startsWith('#EXT-X-STREAM-INF') && height(t) > max) {
       // salta a tag e a URI da variante (próxima linha não vazia e não-tag)
       let j = i + 1;
       while (j < lines.length && !lines[j].trim()) j++;
@@ -294,19 +296,19 @@ function capHlsVariants(body) {
   return out.join('\n');
 }
 
-function capDashRepresentations(xml) {
-  if (!MAX_HEIGHT) return xml;
+function capDashRepresentations(xml, max = MAX_HEIGHT) {
+  if (!max) return xml;
   const re = /<Representation\b[^>]*\bheight="(\d+)"[^>]*?(?:\/>|>[\s\S]*?<\/Representation>)/g;
   const heights = [...xml.matchAll(re)].map(m => +m[1]);
-  if (!heights.some(h => h <= MAX_HEIGHT)) return xml;
-  return xml.replace(re, (m, h) => (+h > MAX_HEIGHT ? '' : m));
+  if (!heights.some(h => h <= max)) return xml;
+  return xml.replace(re, (m, h) => (+h > max ? '' : m));
 }
 
 // Reescreve um manifesto HLS inteiro, encaminhando cada URI pelo nosso proxy.
 // É sensível ao contexto: numa master playlist as URIs são sub-playlists (→/hls),
 // numa media playlist são segmentos (→/seg). A tag anterior desambigua.
-function rewriteManifest(body, manifestUrl, base, ref) {
-  body = capHlsVariants(body);
+function rewriteManifest(body, manifestUrl, base, ref, max) {
+  body = capHlsVariants(body, max || MAX_HEIGHT);
   const lines = body.split('\n');
   let prevTag = '';
 
@@ -497,7 +499,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     console.log('[proxy/hls] manifest servido do mfCache');
     const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
     const ref  = data.r || '';
-    const body = rewriteManifest(cachedBody, manifestUrl, base, ref);
+    const body = rewriteManifest(cachedBody, manifestUrl, base, ref, data.m);
     res.set('Content-Type', 'application/x-mpegURL');
     res.set('Cache-Control', 'no-cache');
     res.set('Access-Control-Allow-Origin', '*');
@@ -539,7 +541,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
   const effectiveUrl = upstream.request?.res?.responseUrl || upstream.request?.responseURL || manifestUrl;
   const base = effectiveUrl.substring(0, effectiveUrl.lastIndexOf('/') + 1);
   const ref  = data.r || '';
-  const body = rewriteManifest(upstream.data, effectiveUrl, base, ref);
+  const body = rewriteManifest(upstream.data, effectiveUrl, base, ref, data.m);
   console.log(`[proxy/hls] ✓ ${body.length} bytes`);
 
   res.set('Content-Type', 'application/x-mpegURL');
@@ -656,7 +658,7 @@ app.all('/file/:encoded.mp4', (req, res) => proxyMedia(req, res, 'file', 'video/
 // /dseg/{token}/..., onde o token assinado fixa a ORIGEM (o proxy do Vidlink) e
 // o Referer; o /dseg só aceita caminhos /sacdn/ dessa origem — não serve de
 // proxy aberto.
-function rewriteMpd(xml, mpdUrl, ref) {
+function rewriteMpd(xml, mpdUrl, ref, max) {
   const origin = new URL(mpdUrl).origin;
   const tok = sign({ o: origin, r: ref });
   const pre = `${SERVER_BASE}/dseg/${tok}`;
@@ -668,7 +670,7 @@ function rewriteMpd(xml, mpdUrl, ref) {
   // A faixa de áudio do Vidlink vem com lang="und" e o leitor do Stremio no
   // Android não a activa (o Nuvio activa). Marca-se como a língua pedida.
   const lang = process.env.DASH_AUDIO_LANG || 'en';
-  xml = capDashRepresentations(xml);
+  xml = capDashRepresentations(xml, max || MAX_HEIGHT);
   return xml
     .replace(/(<AdaptationSet\b[^>]*contentType="audio"[^>]*\blang=")(und|)(")/g, `$1${lang}$3`)
     .replace(/<AdaptationSet\b(?![^>]*\blang=)([^>]*contentType="audio"[^>]*)>/g, `<AdaptationSet lang="${lang}"$1>`)
@@ -685,7 +687,7 @@ app.get('/dash/:encoded.mpd', async (req, res) => {
       headers: { 'User-Agent': PROXY_UA, ...(data.r ? { Referer: data.r, Origin: originFromReferer(data.r) } : {}) },
       timeout: 20000, responseType: 'text', transformResponse: x => x, httpAgent, httpsAgent,
     });
-    const body = rewriteMpd(String(up.data), data.u, data.r || '');
+    const body = rewriteMpd(String(up.data), data.u, data.r || '', data.m);
     console.log(`[proxy/dash] ✓ ${body.length} bytes`);
     res.set('Content-Type', 'application/dash+xml');
     res.set('Cache-Control', 'no-cache');
