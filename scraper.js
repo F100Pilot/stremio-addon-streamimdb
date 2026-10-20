@@ -152,6 +152,7 @@ async function waitProbes(probes) {
 }
 
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000;
+const SUBS_WAIT_MS = parseInt(process.env.SUBS_WAIT_MS, 10) || 3000;
 const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 8;
 
 const cache   = new Map();
@@ -211,6 +212,8 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   activeScrapes++;
 
   const fetchPromise = (async () => {
+    const t0 = Date.now();
+    const marca = etapa => console.log(`[tempo] ${key} · ${etapa}: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     // 1. datacenter_scraper (VixSrc, Vidlink) — só axios, mais rápido; URLs
     // entregues directo ao cliente (proxyable:false), que tenta com o seu
     // próprio IP residencial. Vale sempre a pena tentar primeiro: evita
@@ -219,6 +222,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     try {
       dcStreams = await fetchFromDatacenterSources(imdbId, type, season, episode);
       if (dcStreams) console.log('[scraper] datacenter sources OK');
+      marca('fontes (VixSrc/Vidlink)');
       partialList = !!(dcStreams && dcStreams.partial);
     } catch (e) { console.log('[scraper] datacenter sources falhou:', e.message); }
 
@@ -259,8 +263,15 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     // Fontes com legendas próprias (VixSrc) não são tocadas — as delas vêm do
     // manifesto e estão garantidamente em sincronia.
     if (dcStreams && dcStreams.length) {
-      await addExternalSubtitles(dcStreams, imdbId, type, season, episode);
+      // As legendas externas (OpenSubtitles) não seguram a lista mais do que
+      // SUBS_WAIT_MS: se demorarem, acabam em segundo plano e preenchem os
+      // mesmos objectos (que são os que ficam na cache).
+      const subsP = addExternalSubtitles(dcStreams, imdbId, type, season, episode)
+        .catch(e => console.log('[scraper] legendas externas falharam:', e.message));
+      await Promise.race([subsP, new Promise(r => { const t = setTimeout(r, SUBS_WAIT_MS); if (t.unref) t.unref(); })]);
+      marca('legendas externas');
       await waitProbes(probes);
+      marca('medição de velocidade (total)');
       setCached(key, dcStreams, partialList ? 20 * 1000 : undefined);
       return dcStreams;
     }
