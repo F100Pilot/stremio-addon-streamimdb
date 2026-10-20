@@ -178,12 +178,14 @@ function cacheKey(imdbId, type, season, episode) {
 function getCached(key) {
   const entry = cache.get(key);
   if (!entry) return null;
-  if (Date.now() - entry.timestamp > CACHE_TTL) { cache.delete(key); return null; }
+  if (Date.now() - entry.timestamp > (entry.ttl || CACHE_TTL)) { cache.delete(key); return null; }
   return entry.streams;
 }
 
-function setCached(key, streams) {
-  cache.set(key, { streams, timestamp: Date.now() });
+// `ttl` curto para listas incompletas (uma fonte ainda a caminho): a próxima
+// abertura volta a pedir e apanha a que faltava.
+function setCached(key, streams, ttl) {
+  cache.set(key, { streams, timestamp: Date.now(), ttl });
   console.log(`[cache] Guardado: ${key} (cache size: ${cache.size})`);
 }
 
@@ -213,10 +215,11 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     // entregues directo ao cliente (proxyable:false), que tenta com o seu
     // próprio IP residencial. Vale sempre a pena tentar primeiro: evita
     // acordar o browser quando estas fontes resolvem.
-    let dcStreams = null;
+    let dcStreams = null, partialList = false;
     try {
       dcStreams = await fetchFromDatacenterSources(imdbId, type, season, episode);
       if (dcStreams) console.log('[scraper] datacenter sources OK');
+      partialList = !!(dcStreams && dcStreams.partial);
     } catch (e) { console.log('[scraper] datacenter sources falhou:', e.message); }
 
     // Medição de débito por título. Arranca já, em paralelo com o que se segue
@@ -258,7 +261,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     if (dcStreams && dcStreams.length) {
       await addExternalSubtitles(dcStreams, imdbId, type, season, episode);
       await waitProbes(probes);
-      setCached(key, dcStreams);
+      setCached(key, dcStreams, partialList ? 20 * 1000 : undefined);
       return dcStreams;
     }
 

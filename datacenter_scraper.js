@@ -302,6 +302,10 @@ async function tryVidlink(tmdbId, type, season, episode) {
 }
 
 // ── Orquestração ─────────────────────────────────────────────────────────────
+const VIDLINK_SOFT_MS = parseInt(process.env.VIDLINK_SOFT_MS, 10) || 5000;
+const LATE_TTL = 10 * 60 * 1000;
+const lateVidlink = new Map();   // resultados do Vidlink que chegaram depois da resposta
+
 async function fetchFromDatacenterSources(imdbId, type, season, episode) {
   const tmdb = await convertImdbToTmdb(imdbId);
   if (!tmdb) { console.log('[dc] falha ao converter IMDb → TMDB (TMDB_API_KEY?)'); return null; }
@@ -312,10 +316,34 @@ async function fetchFromDatacenterSources(imdbId, type, season, episode) {
   // na primeira. Nem todas têm as mesmas faixas de áudio — a VixSrc é italiana
   // e há títulos em que só traz italiano/alemão. Dando as duas opções ao
   // Stremio, o utilizador escolhe a que tem a língua que quer.
-  const [vix, vid] = await Promise.all([
-    tryVixsrc(tmdbId, type, season, episode).catch(e => { console.log('[dc:vixsrc] erro:', e.message); return null; }),
-    tryVidlink(tmdbId, type, season, episode).catch(e => { console.log('[dc:vidlink] erro:', e.message); return null; }),
-  ]);
+  //
+  // A API do Vidlink chega a demorar 10s+. Não se segura a lista por ela: depois
+  // da VixSrc responder espera-se no máximo VIDLINK_SOFT_MS; se o Vidlink não
+  // chegar, a resposta segue sem ele (marcada `partial`, para o scraper a
+  // guardar pouco tempo) e o resultado dele, quando chegar, fica guardado aqui
+  // para a próxima abertura do título — que já o traz sem espera.
+  const key = `${tmdbId}:${type}:${season || ''}:${episode || ''}`;
+  const memo = lateVidlink.get(key);
+  const vidP = memo && Date.now() - memo.ts < LATE_TTL
+    ? Promise.resolve(memo.streams)
+    : tryVidlink(tmdbId, type, season, episode).catch(e => { console.log('[dc:vidlink] erro:', e.message); return null; });
+  let vidDone = false, vid = null;
+  vidP.then(r => { vidDone = true; vid = r; });
+
+  const vix = await tryVixsrc(tmdbId, type, season, episode).catch(e => { console.log('[dc:vixsrc] erro:', e.message); return null; });
+  if (vix && vix.length) {
+    await Promise.race([vidP, new Promise(r => { const t = setTimeout(r, VIDLINK_SOFT_MS); if (t.unref) t.unref(); })]);
+  } else {
+    await vidP;   // sem VixSrc, o Vidlink é tudo o que há: espera-se por ele
+  }
+  let partial = false;
+  if (!vidDone) {
+    partial = true;
+    console.log(`[dc:vidlink] lento — a lista segue sem ele; fica guardado para a próxima abertura`);
+    vidP.then(r => { if (r && r.length) lateVidlink.set(key, { streams: r, ts: Date.now() }); });
+  } else if (memo) {
+    lateVidlink.delete(key);
+  }
 
   const streams = [
     ...(vix || []).map(s => ({ ...s, source: 'VixSrc' })),
@@ -323,7 +351,8 @@ async function fetchFromDatacenterSources(imdbId, type, season, episode) {
   ];
 
   if (!streams.length) return null;
-  console.log(`[dc] ${streams.length} stream(s): ${streams.map(s => s.source).join(', ')}`);
+  console.log(`[dc] ${streams.length} stream(s): ${streams.map(s => s.source).join(', ')}${partial ? ' (Vidlink a caminho)' : ''}`);
+  if (partial) streams.partial = true;
   return streams;
 }
 
