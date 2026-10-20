@@ -265,10 +265,47 @@ function setFlag(line, key, value) {
   return re.test(line) ? line.replace(re, `${key}=${value}`) : `${line},${key}=${value}`;
 }
 
+// Tecto de resolução (MAX_STREAM_HEIGHT, por omissão 720; 0 desliga). As CDNs
+// actuais entregam o 1080p mais devagar do que o tempo real (medido: segmentos
+// de 5s a demorar 6-17s no proxy do Vidlink), e o leitor fica 30s+ a juntar
+// reserva antes de arrancar. Só se cortam variantes ACIMA do tecto, e só se
+// sobrar pelo menos uma — nunca se deixa um título sem vídeo.
+const MAX_HEIGHT = parseInt(process.env.MAX_STREAM_HEIGHT ?? '720', 10) || 0;
+
+function capHlsVariants(body) {
+  if (!MAX_HEIGHT || !body.includes('#EXT-X-STREAM-INF')) return body;
+  const lines = body.split('\n');
+  const height = l => parseInt((l.match(/RESOLUTION=\d+x(\d+)/i) || [])[1], 10) || 0;
+  const infs = lines.filter(l => l.trim().startsWith('#EXT-X-STREAM-INF'));
+  if (!infs.some(l => height(l) && height(l) <= MAX_HEIGHT)) return body;
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t.startsWith('#EXT-X-STREAM-INF') && height(t) > MAX_HEIGHT) {
+      // salta a tag e a URI da variante (próxima linha não vazia e não-tag)
+      let j = i + 1;
+      while (j < lines.length && !lines[j].trim()) j++;
+      if (j < lines.length && !lines[j].trim().startsWith('#')) i = j;
+      continue;
+    }
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
+
+function capDashRepresentations(xml) {
+  if (!MAX_HEIGHT) return xml;
+  const re = /<Representation\b[^>]*\bheight="(\d+)"[^>]*?(?:\/>|>[\s\S]*?<\/Representation>)/g;
+  const heights = [...xml.matchAll(re)].map(m => +m[1]);
+  if (!heights.some(h => h <= MAX_HEIGHT)) return xml;
+  return xml.replace(re, (m, h) => (+h > MAX_HEIGHT ? '' : m));
+}
+
 // Reescreve um manifesto HLS inteiro, encaminhando cada URI pelo nosso proxy.
 // É sensível ao contexto: numa master playlist as URIs são sub-playlists (→/hls),
 // numa media playlist são segmentos (→/seg). A tag anterior desambigua.
 function rewriteManifest(body, manifestUrl, base, ref) {
+  body = capHlsVariants(body);
   const lines = body.split('\n');
   let prevTag = '';
 
@@ -630,6 +667,7 @@ function rewriteMpd(xml, mpdUrl, ref) {
   // A faixa de áudio do Vidlink vem com lang="und" e o leitor do Stremio no
   // Android não a activa (o Nuvio activa). Marca-se como a língua pedida.
   const lang = process.env.DASH_AUDIO_LANG || 'en';
+  xml = capDashRepresentations(xml);
   return xml
     .replace(/(<AdaptationSet\b[^>]*contentType="audio"[^>]*\blang=")(und|)(")/g, `$1${lang}$3`)
     .replace(/<AdaptationSet\b(?![^>]*\blang=)([^>]*contentType="audio"[^>]*)>/g, `<AdaptationSet lang="${lang}"$1>`)

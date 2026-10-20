@@ -25,6 +25,14 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+// O título mostra a resolução que o leitor vai mesmo receber: o servidor corta
+// as variantes acima de MAX_STREAM_HEIGHT (ver server.js).
+function capQuality(q) {
+  const max = parseInt(process.env.MAX_STREAM_HEIGHT ?? '720', 10) || 0;
+  const h = parseInt(q, 10);
+  return max && h > max ? `${max}p` : q;
+}
+
 function makeHlsProxyUrl(streamUrl, referer) {
   const token = sign({ u: streamUrl, r: referer });
   return `${SERVER_BASE}/hls/${token}.m3u8`;
@@ -135,7 +143,7 @@ builder.defineStreamHandler(async (args) => {
         return {
           url:   streamUrl,
           name:  'StreamIMDb',
-          title: `${titlePrefix}${s.quality}${srcInfo}${audioInfo}${speedInfo}`,
+          title: `${titlePrefix}${capQuality(s.quality)}${srcInfo}${audioInfo}${speedInfo}`,
           ...(subtitles.length ? { subtitles } : {}),
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         };
