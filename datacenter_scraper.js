@@ -244,7 +244,9 @@ async function tryVidlink(tmdbId, type, season, episode) {
       : `${VIDLINK_REF}/movie/${tmdbId}`;
     const res = await axios.get(apiUrl, {
       headers: { 'User-Agent': UA, Referer: pageRef, 'x-playback-environment': process.env.VIDLINK_PLAYBACK_ENV || 'dash-hevc' },
-      timeout: 8000, validateStatus: s => s < 500,
+      // A API do Vidlink chega a passar dos 8s (visto no servidor); corre em
+      // paralelo com a VixSrc, por isso esperar mais só atrasa quando ela é lenta.
+      timeout: parseInt(process.env.VIDLINK_TIMEOUT_MS, 10) || 15000, validateStatus: s => s < 500,
     });
     const stream = res.data && res.data.stream;
     const playlist = stream && stream.playlist;
