@@ -155,7 +155,15 @@ builder.defineStreamHandler(async (args) => {
           name:  'StreamIMDb',
           title: `${titlePrefix}${capQuality(s.quality)}${srcInfo}${audioInfo}${speedInfo}`,
           ...(subtitles.length ? { subtitles } : {}),
-          behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
+          // Experiência (Out/2026): o Stremio Android pára depois de ler o
+          // manifesto, embora o ffmpeg e o Nuvio toquem os mesmos URLs com
+          // vídeo e som. Nas entradas 720p pede-se ao Stremio que passe o
+          // stream pelo servidor de streaming interno dele (notWebReady), para
+          // comparar com as 1080p, que ficam como estavam.
+          behaviorHints: (type === 'series' || s.alt) ? {
+            ...(type === 'series' ? { bingeGroup: `streamimdb-${imdbId}${s.alt ? '-720' : ''}` } : {}),
+            ...(s.alt && process.env.STREMIO_NOT_WEB_READY !== 'off' ? { notWebReady: true } : {}),
+          } : undefined,
         };
       });
       return { streams };
