@@ -64,6 +64,13 @@ async function annotateStreams(streams, originalLanguage = null) {
   await Promise.all(streams.map(async s => {
     if (!s || !s.url || s.audioLangs) return;
     s.audioLangs = [];
+    // DASH (Vidlink): o manifesto vem de um proxy lento (até 20s) e o áudio vem
+    // com lang="und" — lê-lo só atrasava a lista sem dizer nada. Fica a
+    // estimativa do TMDB, como nos outros streams sem língua legível.
+    if (s.kind === 'dash') {
+      if (originalLanguage) { s.audioLangs = [originalLanguage]; s.audioInferred = true; }
+      return;
+    }
     try {
       const res = await axios.get(s.url, {
         headers: { 'User-Agent': AUDIO_UA, ...(s.referer ? { Referer: s.referer } : {}) },
@@ -247,7 +254,9 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     // O `resolveVidsrc` foi substituído pelo `resolveWithBrowser`, que tenta
     // uma lista de fontes em sequência em vez de só o vidsrc.in — o vidsrc.in
     // continua a ser a primeira da lista e usa exactamente a mesma cadeia.
-    if (!dcStreams || !(await annotateStreams(dcStreams, origLang))) {
+    const temIngles = dcStreams && await annotateStreams(dcStreams, origLang);
+    marca('idioma do áudio');
+    if (!temIngles) {
       console.log('[scraper] sem áudio inglês nas fontes rápidas — a tentar o browser');
       try {
         const vs = await resolveWithBrowser(imdbId, type, season, episode);

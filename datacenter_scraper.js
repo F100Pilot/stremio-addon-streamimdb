@@ -303,7 +303,7 @@ async function tryVidlink(tmdbId, type, season, episode) {
 }
 
 // ── Orquestração ─────────────────────────────────────────────────────────────
-const VIDLINK_SOFT_MS = parseInt(process.env.VIDLINK_SOFT_MS, 10) || 5000;
+const VIDLINK_SOFT_MS = parseInt(process.env.VIDLINK_SOFT_MS, 10) || 2000;
 const LATE_TTL = 10 * 60 * 1000;
 const lateVidlink = new Map();   // resultados do Vidlink que chegaram depois da resposta
 
