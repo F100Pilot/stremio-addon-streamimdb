@@ -627,7 +627,12 @@ function rewriteMpd(xml, mpdUrl, ref) {
     if (v.startsWith(origin + '/')) return pre + v.slice(origin.length);
     return v;   // relativo: resolve-se contra o URL do manifesto, que já é nosso
   };
+  // A faixa de áudio do Vidlink vem com lang="und" e o leitor do Stremio no
+  // Android não a activa (o Nuvio activa). Marca-se como a língua pedida.
+  const lang = process.env.DASH_AUDIO_LANG || 'en';
   return xml
+    .replace(/(<AdaptationSet\b[^>]*contentType="audio"[^>]*\blang=")(und|)(")/g, `$1${lang}$3`)
+    .replace(/<AdaptationSet\b(?![^>]*\blang=)([^>]*contentType="audio"[^>]*)>/g, `<AdaptationSet lang="${lang}"$1>`)
     .replace(/\b(initialization|media|sourceURL)="([^"]+)"/g, (_, a, v) => `${a}="${fix(v)}"`)
     .replace(/<BaseURL>([^<]+)<\/BaseURL>/g, (_, v) => `<BaseURL>${fix(v.trim())}</BaseURL>`);
 }
